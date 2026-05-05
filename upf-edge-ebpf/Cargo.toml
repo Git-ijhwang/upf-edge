@@ -1,0 +1,17 @@
+[package]
+name = "upf-edge-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+upf-edge-common = { path = "../upf-edge-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "upf-edge"
+path = "src/main.rs"

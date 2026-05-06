@@ -1,14 +1,22 @@
 use anyhow::Context as _;
+use aya::maps::HashMap;
 use aya::programs::{Xdp, XdpFlags};
 use clap::Parser;
+
 #[rustfmt::skip]
 use log::{debug, warn};
 use tokio::signal;
 
+use upf_edge_common::{SessionInfo, SessionKey};
+use std::net::Ipv4Addr;
+
 #[derive(Debug, Parser)]
 struct Opt {
     #[clap(short, long, default_value = "eth0")]
-    iface: String,
+    iface_n3: String,
+
+    #[clap(short = 'n', long, default_value = "eth1")]
+    iface_n6: String,
 }
 
 #[tokio::main]
@@ -53,11 +61,40 @@ async fn main() -> anyhow::Result<()> {
             });
         }
     }
-    let Opt { iface } = opt;
-    let program: &mut Xdp = ebpf.program_mut("upf_edge").unwrap().try_into()?;
-    program.load()?;
-    program.attach(&iface, XdpFlags::default())
-        .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
+
+    //강제 세션 추가
+    {
+        let mut session_map: HashMap<_, SessionKey, SessionInfo> = 
+            HashMap::try_from(ebpf.map_mut("SESSION_MAP").unwrap())?;
+        
+        let key = SessionKey{
+            ue_ip: u32::from(Ipv4Addr::new(192, 168, 100, 2)).to_be(),
+        };
+
+        let info = SessionInfo{
+            teid: 4u32.to_be(),
+            gnb_ip: u32::from(Ipv4Addr::new(172, 22, 0, 23)).to_be(),
+            upf_ip: u32::from(Ipv4Addr::new(172, 22, 0, 8)).to_be(),
+        };
+
+        session_map.insert(key, info, 0)?;
+        prinln!("Session Inserted: UE=192.168.100.1 TEID=4 gNB=172.22.0.23")
+    }
+
+    let Opt { iface_n3, iface_n6 } = opt;
+    // for N3 Interface
+    let program_n3: &mut Xdp = ebpf.program_mut("upf_edge_n3").unwrap().try_into()?;
+    program_n3.load()?;
+    program_n3.attach(&iface_n3, XdpFlags::default())
+        .context("failed to attach N3 XDP")?;
+    println!("N3 XDP attached to {}", iface_n3);
+
+    // for N6 Interface
+    let program_n6: &mut Xdp = ebpf.program_mut("upf_edge_n6").unwrap().try_into()?;
+    program_n6.load()?;
+    program_n6.attach(&iface_n6, XdpFlags::default())
+        .context("failed to attach N6 XDP")?;
+    println!("N6 XDP attached to {}", iface_n6);
 
     let ctrl_c = signal::ctrl_c();
     println!("Waiting for Ctrl-C...");

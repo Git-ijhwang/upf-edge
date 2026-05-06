@@ -17,7 +17,6 @@ use upf_edge_common::{SessionInfo, SessionKey};
 mod gtpu;
 use gtpu::*;
 
-
 #[map]
 static SESSION_MAP: HashMap<SessionKey, SessionInfo> = HashMap::with_max_entries(1024, 0);
 
@@ -52,6 +51,23 @@ unsafe fn ptr_at_mut<T> (ctx: &XdpContext, offset: usize)
     Some((start + offset) as *mut T)
 }
 
+#[xdp]
+pub fn upf_edge_n3(ctx: XdpContext) -> u32
+{
+    match try_upf_edge(&ctx) {
+        Ok(ret) => ret,
+        Err(_) => xdp_action::XDP_ABORTED,
+    }
+}
+
+#[xdp]
+pub fn upf_edge_n6(ctx: XdpContext) -> u32
+{
+    match try_encap(&ctx) {
+        Ok(ret) => ret,
+        Err(_) => xdp_action::XDP_ABORTED,
+    }
+}
 
 #[xdp]
 pub fn upf_edge(ctx: XdpContext) -> u32 {

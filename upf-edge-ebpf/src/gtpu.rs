@@ -81,5 +81,5 @@ pub fn ip_checksum(hdr: &IpHdr) -> u16
     (!(sum as u16).to_be())
 }
 
-//TODO: 추후  bpf_csum_diff로 구현.
+//TODO: 추후  bpf_csum_diff로 udp_checksum()구현.
 //3GPP TS 29.281에서 udp checksum은 0 허용

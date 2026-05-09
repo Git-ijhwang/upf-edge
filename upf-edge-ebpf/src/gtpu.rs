@@ -62,6 +62,7 @@ pub struct UdpHdr {
 
 pub fn ip_checksum(hdr: &IpHdr) -> u16 
 {
+    /*
     let raw = unsafe {
         core::slice::from_raw_parts(
             hdr as *const IpHdr as *const u16, 
@@ -79,6 +80,30 @@ pub fn ip_checksum(hdr: &IpHdr) -> u16
     }
 
     (!(sum as u16).to_be())
+    */
+        // IP 헤더는 고정 20바이트 = 10개의 u16
+    // 루프 없이 수동으로 펼침 (verifier 통과용)
+    let p = hdr as *const IpHdr as *const u16;
+    let mut sum: u32 = 0;
+
+    unsafe {
+        sum += u16::from_be(*p.add(0)) as u32;
+        sum += u16::from_be(*p.add(1)) as u32;
+        sum += u16::from_be(*p.add(2)) as u32;
+        sum += u16::from_be(*p.add(3)) as u32;
+        sum += u16::from_be(*p.add(4)) as u32;
+        sum += u16::from_be(*p.add(5)) as u32;
+        sum += u16::from_be(*p.add(6)) as u32;
+        sum += u16::from_be(*p.add(7)) as u32;
+        sum += u16::from_be(*p.add(8)) as u32;
+        sum += u16::from_be(*p.add(9)) as u32;
+    }
+
+    // carry 처리 (최대 2번으로 충분)
+    sum = (sum & 0xFFFF) + (sum >> 16);
+    sum = (sum & 0xFFFF) + (sum >> 16);
+
+    !(sum as u16)
 }
 
 //TODO: 추후  bpf_csum_diff로 udp_checksum()구현.

@@ -40,10 +40,13 @@ async fn main() -> anyhow::Result<()> {
     // runtime. This approach is recommended for most real-world use cases. If you would
     // like to specify the eBPF program at runtime rather than at compile-time, you can
     // reach for `Bpf::load_file` instead.
-    let mut ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
-        env!("OUT_DIR"),
-        "/upf-edge"
-    )))?;
+    let mut ebpf = aya::Ebpf::load(
+        aya::include_bytes_aligned!(
+            concat!(
+                env!("OUT_DIR"), "/upf-edge"
+            )
+        )
+    )?;
     match aya_log::EbpfLogger::init(&mut ebpf) {
         Err(e) => {
             // This can happen if you remove all log statements from your eBPF program.
@@ -64,35 +67,52 @@ async fn main() -> anyhow::Result<()> {
 
     //강제 세션 추가
     {
+        use aya::maps::Array;
+        use upf_edge_common::MacAddr;
+        let mut gw_mac: Array<_, MacAddr> = Array::try_from(ebpf.map_mut("GW_MAC").unwrap())?;
+        gw_mac.set(0, MacAddr {
+            // addr: [ 0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xdd ],
+            addr: [0x52, 0x55, 0x55, 0x2e, 0xff, 0xc6],  // eth0 자신의 MAC
+
+        }, 0)?;
+        println!("GW Mac set: 52:55:55:2e:ff:c6");
+
         let mut session_map: HashMap<_, SessionKey, SessionInfo> = 
             HashMap::try_from(ebpf.map_mut("SESSION_MAP").unwrap())?;
         
         let key = SessionKey{
-            ue_ip: u32::from(Ipv4Addr::new(192, 168, 100, 2)).to_be(),
+            ue_ip: u32::from(Ipv4Addr::new(192, 168, 100, 100)).to_be(),
         };
 
         let info = SessionInfo{
-            teid: 4u32.to_be(),
+            teid: 3u32.to_be(),
             gnb_ip: u32::from(Ipv4Addr::new(172, 22, 0, 23)).to_be(),
             upf_ip: u32::from(Ipv4Addr::new(172, 22, 0, 8)).to_be(),
         };
 
         session_map.insert(key, info, 0)?;
-        prinln!("Session Inserted: UE=192.168.100.1 TEID=4 gNB=172.22.0.23")
+        println!("Session Inserted: UE=192.168.100.100 TEID=6 gNB=172.22.0.23");
+
+        let mut if_index: Array<_, u32> = Array::try_from(ebpf.map_mut("IF_INDEX").unwrap())?;
+
+        if_index.set(0, 2, 0)?;
+        if_index.set(1, 3, 0)?;
+        println!("IF_INDEX set: eth0=2, br=4");
     }
 
     let Opt { iface_n3, iface_n6 } = opt;
+
     // for N3 Interface
     let program_n3: &mut Xdp = ebpf.program_mut("upf_edge_n3").unwrap().try_into()?;
     program_n3.load()?;
-    program_n3.attach(&iface_n3, XdpFlags::default())
+    program_n3.attach(&iface_n3, XdpFlags::SKB_MODE)
         .context("failed to attach N3 XDP")?;
     println!("N3 XDP attached to {}", iface_n3);
 
     // for N6 Interface
     let program_n6: &mut Xdp = ebpf.program_mut("upf_edge_n6").unwrap().try_into()?;
     program_n6.load()?;
-    program_n6.attach(&iface_n6, XdpFlags::default())
+    program_n6.attach(&iface_n6, XdpFlags::SKB_MODE)
         .context("failed to attach N6 XDP")?;
     println!("N6 XDP attached to {}", iface_n6);
 

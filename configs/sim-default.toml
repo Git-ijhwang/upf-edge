@@ -1,0 +1,15 @@
+[network]
+smf_n4_addr = "10.45.0.1"
+upf_n4_addr = "10.45.0.4"
+upf_n4_port = 8805
+gnb_addr = "10.45.0.2"
+
+[session]
+ue_ip_pool_start = "10.45.0.100"
+ue_ip_pool_end = "10.45.0.200"
+gnb_teid_start = 2147483649
+
+[timing]
+heartbeat_interval_sec = 15
+response_timeout_ms = 5000
+max_retries = 3

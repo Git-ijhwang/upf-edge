@@ -1,4 +1,6 @@
 use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::net::UdpSocket;
 use tokio::time::{timeout, Duration};
 
@@ -7,6 +9,9 @@ pub struct PfcpTransport {
     peer_addr:          SocketAddr,
     response_timeout:   Duration,
     max_retries:        u32,
+
+    // for last PFCP message recv/send time
+    pub last_activity:  Arc<Mutex<Instant>>
 }
 
 impl PfcpTransport  {
@@ -25,6 +30,7 @@ impl PfcpTransport  {
             peer_addr,
             response_timeout: Duration::from_millis(timeout_ms),
             max_retries,
+            last_activity: Arc::new(Mutex::new(Instant::now())),
         })
     }
 
@@ -47,6 +53,9 @@ impl PfcpTransport  {
                 Ok(Ok((n, _src))) => {
                     buf.truncate(n);
                     pfcp_common::dump::print_hex(&buf, n);
+
+                    // Update last_activity
+                    *self.last_activity.lock().unwrap() = Instant::now();
                     return Ok(buf);
                 }
 

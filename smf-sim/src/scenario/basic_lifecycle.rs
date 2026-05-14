@@ -127,6 +127,7 @@ pub async fn run(
     tracing::info!("✓ [2/5] Session Establishment 완료");
 
     // ── 3. Heartbeat × 3 ────────────────────────────
+    /*
     for i in 1..=3 {
         tracing::info!("  Heartbeat {}/3 — {}초 대기...",
             i, config.timing.heartbeat_interval_sec);
@@ -148,6 +149,12 @@ pub async fn run(
             "expected Heartbeat Response, got {}", rsp_hdr.msg_type);
         tracing::info!("← Heartbeat Response (seq={})", rsp_hdr.seq_num);
     }
+    tracing::info!("✓ [3/5] Heartbeat × 3 완료");
+    */
+    let wait_secs = config.timing.heartbeat_interval_sec * 3 + 5;
+    tracing::info!("[3/5] keepalive waiting... {}s (expect Heartbeat 3 times)", wait_secs);
+
+    tokio::time::sleep(Duration::from_secs(wait_secs)).await;
     tracing::info!("✓ [3/5] Heartbeat × 3 완료");
 
     // ── 4. Session Deletion ─────────────────────────

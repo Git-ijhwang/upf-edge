@@ -2,10 +2,13 @@ pub mod config;
 pub mod transport;
 pub mod state;
 pub mod scenario;
+pub mod keepalive;
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use clap::{Parser, Subcommand};
+use tokio::time::{Duration};
 use pfcp_common::builder::MsgBuilder;
 use pfcp_common::header::PfcpHeader;
 use pfcp_common::ie;
@@ -344,6 +347,18 @@ async fn main() -> anyhow::Result<()>
         },
 
         Commands::Run { scenario, num_ues: _ } => {
+            let transport = Arc::new(transport);
+            let seq_counter = Arc::new(Mutex::new(100u32));
+            {
+                let t = transport.clone();
+                let s = seq_counter.clone();
+
+                let interval = Duration::from_secs(config.timing.heartbeat_interval_sec);
+
+                tokio::spawn( async move {
+                    keepalive::run(t, interval, s).await;
+                });
+            }
             let mut sim_state = state::SimState::new(&config.session);
             match scenario {
                 1 => scenario::basic_lifecycle::run(&transport, &mut sim_state, &config).await?,

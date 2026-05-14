@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pfcp-common = { path = "../pfcp-common" }
 upf-edge-common = { path = "../upf-edge-common", features = ["user"] }
 
 anyhow = { workspace = true, default-features = true }

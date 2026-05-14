@@ -1083,6 +1083,7 @@ dependencies = [
  "env_logger",
  "libc",
  "log",
+ "pfcp-common",
  "tokio",
  "upf-edge-common",
  "upf-edge-ebpf",

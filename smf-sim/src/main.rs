@@ -11,7 +11,7 @@ use pfcp_common::header::PfcpHeader;
 use pfcp_common::ie;
 use pfcp_common::types::*;
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(name = "smf-sim")]
 #[command(about = "SMF PFCP Simulator for upf_edge testing")]
 struct Cli {
@@ -27,14 +27,14 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Commands {
     ///시나리오 실행
     Run {
         #[arg(short, long, default_value_t = 1)]
         scenario: u8,
 
-        #[arg(short, long, default_value_t = 3)]
+        #[arg(short, long, default_value_t = 1)]
         num_ues: u32,
     },
     /// 단일 메시지 전송
@@ -44,7 +44,7 @@ enum Commands {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum SingleMessage {
     ///Heartbeat Request
     HeartBeat,
@@ -84,6 +84,8 @@ async fn send_heartbeat(transport: &transport::PfcpTransport)
     let seq = 1u32;
     let hdr = PfcpHeader::new_node_msg(PFCP_HEARTBEAT_REQ, seq);
     let mut msg = MsgBuilder::new(hdr);
+
+    // PCRF IE: RECOVERY TIME STAMP
     msg.add_recovery_timestamp(ntp_now());
     let req = msg.finish();
 
@@ -282,42 +284,48 @@ async fn send_session_deletion( transport: &transport::PfcpTransport,
 }
 
 
+//run example
+// 1. cargo run -p smf-sim -- send heart-beat
+// 2. cargo run -p smf-sim -- send association-setup
+// 3. cargo run -p smf-sim -- send session-establish
+// 4. cargo run -p smf-sim -- run --scenario 1
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()>
 {
     let cli = Cli::parse();
+
+    println!("{:#?}", cli);
 
     tracing_subscriber::fmt()
         .with_env_filter(&cli.log_level)
         .with_target(false)
         .init();
 
-    let content = tokio::fs::read_to_string(&cli.config).await?;
-    let config: config::SimConfig = toml::from_str(&content)?;
+    let content = tokio::fs::read_to_string(&cli.config).await?; //Get directory path info for Toml file
+    let config: config::SimConfig = toml::from_str(&content)?; //Read Toml file
 
     tracing::info!("config loaded from{}", cli.config.display());
     tracing::info!("UPF target: {}:{}", config.network.upf_n4_addr, config.network.upf_n4_port);
 
+    // UDP Socket Create for PFCP
     let transport = transport::PfcpTransport::new(
+
+        //Bind address:  Combinded with My IP address and Port number
         std::net::SocketAddr::new(
-            // config.network.smf_n4_addr.into(),
-            std::net::Ipv4Addr::UNSPECIFIED.into(),
-            0),
-        std::net::SocketAddr::new(config.network.upf_n4_addr.into(), 
-            config.network.upf_n4_port),
-        config.timing.response_timeout_ms,
-        config.timing.max_retries,
+                // config.network.smf_n4_addr.into(),
+                std::net::Ipv4Addr::UNSPECIFIED.into(), //My address/
+                0), //Port Number
+
+        std::net::SocketAddr::new(
+            config.network.upf_n4_addr.into(),
+            config.network.upf_n4_port), //Destination(Server) Port
+
+        config.timing.response_timeout_ms, //Timeout_ms
+        config.timing.max_retries, //Max_retries
     ).await?;
 
     match cli.command {
-        Commands::Run { scenario, _num_ues } => {
-            let mut sim_state = state::SimState::new(&config.session);
-            match scenario {
-                1 => scenario::basic_lifecycle::run(&transport, &mut sim_state, &config).await?,
-                _ => anyhow::bail!("Scenario {} not implemented yet", scenario),
-            }
-        },
-
         Commands::Send { message } => match message {
             SingleMessage::HeartBeat => {
                 send_heartbeat(&transport).await?;
@@ -334,6 +342,15 @@ async fn main() -> anyhow::Result<()>
                 send_session_deletion(&transport, seid).await?;
             }
         },
+
+        Commands::Run { scenario, num_ues: _ } => {
+            let mut sim_state = state::SimState::new(&config.session);
+            match scenario {
+                1 => scenario::basic_lifecycle::run(&transport, &mut sim_state, &config).await?,
+                _ => anyhow::bail!("Scenario {} not implemented yet", scenario),
+            }
+        },
+
     }
 
     Ok(())

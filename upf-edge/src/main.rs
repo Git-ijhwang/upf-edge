@@ -2,6 +2,7 @@ use anyhow::Context as _;
 use aya::maps::HashMap;
 use aya::programs::{Xdp, XdpFlags};
 use clap::Parser;
+use std::sync::{Arc, Mutex};
 
 #[rustfmt::skip]
 use log::{debug, warn};
@@ -10,6 +11,8 @@ use tokio::signal;
 use upf_edge_common::{SessionInfo, SessionKey};
 use std::net::Ipv4Addr;
 
+mod pfcp_server;
+
 #[derive(Debug, Parser)]
 struct Opt {
     #[clap(short, long, default_value = "eth0")]
@@ -17,6 +20,14 @@ struct Opt {
 
     #[clap(short = 'n', long, default_value = "eth1")]
     iface_n6: String,
+
+    /// UPF N4 (PFCP) address
+    #[clap(long, default_value = "0.0.0.0")]
+    n4_addr: Ipv4Addr,
+
+    /// UPF N3 (GTP-U) address
+    #[clap(long, default_value = "127.22.0.8")]
+    n3_addr: Ipv4Addr,
 }
 
 #[tokio::main]
@@ -77,6 +88,7 @@ async fn main() -> anyhow::Result<()> {
         }, 0)?;
         println!("GW Mac set: 52:55:55:2e:ff:c6");
 
+        /*
         let mut session_map: HashMap<_, SessionKey, SessionInfo> = 
             HashMap::try_from(ebpf.map_mut("SESSION_MAP").unwrap())?;
         
@@ -92,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
 
         session_map.insert(key, info, 0)?;
         println!("Session Inserted: UE=192.168.100.100 TEID=6 gNB=172.22.0.23");
+        */
 
         let mut if_index: Array<_, u32> = Array::try_from(ebpf.map_mut("IF_INDEX").unwrap())?;
 
@@ -100,7 +113,12 @@ async fn main() -> anyhow::Result<()> {
         println!("IF_INDEX set: eth0=2, br=4");
     }
 
-    let Opt { iface_n3, iface_n6 } = opt;
+    let session_map: HashMap<_, SessionKey, SessionInfo> =
+        HashMap::try_from(ebpf.take_map("SESSION_MAP").unwrap())?;
+    let session_map = Arc::new(Mutex::new(session_map));
+    let pfcp_map: Arc<Mutex<HashMap<_, SessionKey, SessionInfo>>> = session_map.clone();
+
+    let Opt { iface_n3, iface_n6, n4_addr, n3_addr } = opt;
 
     // for N3 Interface
     let program_n3: &mut Xdp = ebpf.program_mut("upf_edge_n3").unwrap().try_into()?;
@@ -115,6 +133,18 @@ async fn main() -> anyhow::Result<()> {
     program_n6.attach(&iface_n6, XdpFlags::SKB_MODE)
         .context("failed to attach N6 XDP")?;
     println!("N6 XDP attached to {}", iface_n6);
+
+
+    let pfcp = Arc::new(Mutex::new(pfcp_server::PfcpServer::new(n4_addr, n3_addr)));
+
+    tokio::spawn(async move {
+        if let Err(e) = pfcp_server::run(pfcp, pfcp_map).await {
+            log::error!("PFCP Server error: {}", e);
+        }
+    });
+
+    println!("PFCP Server started on {}:8805", n4_addr);
+    println!("Waiting for Ctrl-C...");
 
     let ctrl_c = signal::ctrl_c();
     println!("Waiting for Ctrl-C...");

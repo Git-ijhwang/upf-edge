@@ -10,11 +10,13 @@ pub struct PfcpTransport {
 }
 
 impl PfcpTransport  {
+
     pub async fn new ( bind_addr: SocketAddr,
                        peer_addr: SocketAddr,
                        timeout_ms: u64,
-                       max_retries: u32,
-    ) -> anyhow::Result<Self> {
+                       max_retries: u32,)
+    -> anyhow::Result<Self>
+{
         let socket = UdpSocket::bind(bind_addr).await?;
         tracing::info!("PFCP transport bound to {}", socket.local_addr()?);
 

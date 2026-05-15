@@ -1,5 +1,5 @@
 [network]
-smf_n4_addr = "127.0.0.1"
+smf_n4_addr = "127.0.0.2"
 upf_n4_addr = "127.0.0.1"
 upf_n4_port = 8805
 gnb_addr = "172.22.0.23"

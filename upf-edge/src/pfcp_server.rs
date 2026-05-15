@@ -4,6 +4,7 @@
 use std::net::{Ipv4Addr, SocketAddr };
 use std::sync::{Arc, Mutex};
 use tokio::net::UdpSocket;
+use tokio::time::{Duration};
 
 use aya::maps::HashMap;
 use upf_edge_common::{SessionInfo, SessionKey};
@@ -37,6 +38,11 @@ pub struct PfcpServer {
     /// SEID → UE IP 매핑 (Session Deletion 시 맵 제거용)
     sessions: std::collections::HashMap<u64, Ipv4Addr>,
 
+    /// SMF Address learned during Association procedure
+    peer_addr: Option<SocketAddr>,
+
+    /// Last time when PFCP msg receive
+    last_activity: std::time::Instant,
 }
 
 
@@ -56,7 +62,9 @@ impl PfcpServer {
             associated: false,
             next_seid: 1,
             next_teid: 1000,
-            sessions: std::collections::HashMap::new()
+            sessions: std::collections::HashMap::new(),
+            peer_addr: None,
+            last_activity: std::time::Instant::now(),
         }
     }
 
@@ -84,85 +92,133 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
         s.n4_addr
     };
 
-    let socket = UdpSocket::bind(SocketAddr::new(n4_addr.into(), 8805)).await?;
+    let socket = Arc::new(UdpSocket::bind(SocketAddr::new(n4_addr.into(), 8805)).await?);
     log::info!("PFCP server listening on {}:8805", n4_addr);
 
     let mut buf = [0u8; 4096];
+    let interval = std::time::Duration::from_secs(15);
+    let mut keepalive_seq = 200u32;
 
+    // let mut keepalive_spawned = false;
     loop {
-        let (n, src) = match socket.recv_from(&mut buf).await {
-            Ok(r) => r,
-            Err(e) => {
-                log::error!("recv error: {}", e);
-                continue;
+        let sleep_dur = {
+            let srv = server.lock().unwrap();
+            let elapsed = srv.last_activity.elapsed();
+            if elapsed >= interval {
+            drop(srv);
+                std::time::Duration::from_millis(1)
+            }
+            else {
+            drop(srv);
+                interval - elapsed
             }
         };
 
-        let data = &buf[..n];
-        log::info!("<- PFCP {}bytes from {}", n, src);
+        tokio::select! {
+            // Branch #1: PFCP Message Receive
+            result = socket.recv_from(&mut buf) => {
+                let (n, src) = match result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        log::error!("recv error: {}", e);
+                        continue;
+                    }
+                };
 
-        match handle_message(data, &server, &session_map) {
-            Ok(response) => {
-                if let Err(e) = socket.send_to(&response, src).await {
-                    log::error!("send error to {}: {}", src, e);
+                let data = &buf[..n];
+                log::info!("<- PFCP {}bytes from {}", n, src);
+
+                // last_activity update
+                // server.lock().unwrap().last_activity = std::time::Instant::now();
+                            // let mut srv = server.lock().unwrap();
+                            // srv.last_activity = std::time::Instant::now();
+                            // drop(srv);
+                            touch_activity(&server);
+
+                match handle_message(data, &server, &session_map) {
+                    Ok(response) => {
+                        if let Err(e) = socket.send_to(&response, src).await {
+                            log::error!("send error to {}: {}", src, e);
+                        }
+                        else {
+                            // server.lock().unwrap().last_activity = std::time::Instant::now();
+                            // let mut srv = server.lock().unwrap();
+                            // srv.last_activity = std::time::Instant::now();
+                            // drop(srv);
+                            touch_activity(&server);
+                        }
+
+                        /*
+                        if !keepalive_spawned {
+                            let srv = server.lock().unwrap();
+
+                            if srv.associated && srv.peer_addr.is_some() {
+                                drop(srv);
+                                let srv_clone = server.clone();
+                                let sock_clone = socket.clone();
+
+                                tokio::spawn(async move {
+                                    run_keepalive(srv_clone, sock_clone).await;
+                                });
+
+                                keepalive_spawned = true;
+                                log::info!("[Keepalive] UPF -> SMF keepalive task started");
+                            }
+                        }
+                        */
+                    }
+                    Err(e) => {
+                        log::error!("PFCP handleing error: {}", e);
+                    }
                 }
             }
-            Err(e) => {
-                log::error!("PFCP handleing error: {}", e);
-            }
-        }
-    }
-}
 
-fn handle_message ( data: &[u8],
-                    server: &Arc<Mutex<PfcpServer>>,
-                    session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>)
-    -> anyhow::Result<Vec<u8>>
-{
-    let (header, body) = PfcpHeader::decode(data)?;
-
-    log::info!("  msg_type={}, seq={}, seid={:?}", header.msg_type, header.seq_num, header.seid);
-
-    match header.msg_type {
-        PFCP_HEARTBEAT_REQ => {
-            let srv = server.lock().unwrap();
-            log::info!("-> Heartbeat Response (seq={}) ", header.seq_num);
-
-            Ok(builder::build_heartbeat_response(header.seq_num, srv.recovery_ts))
-        }
-
-        PFCP_ASSOCIATION_SETUP_REQ => {
-            let ies = ie::iter_ies(body);
-            let mut peer_addr = None;
-            for raw_ie in &ies {
-                if raw_ie.ie_type == PFCP_IE_NODE_ID {
-                    peer_addr = Some(ie::parse_node_id(raw_ie.value)?);
+            // Branch #2: Keepalive Timer
+            _ = tokio::time::sleep(sleep_dur) => {
+                 if let Some((req, peer)) = check_keepalive(&server, interval, &mut keepalive_seq) {
+                if let Err(e) = socket.send_to(&req, peer).await {
+                    log::error!("[keepalive] send error: {}", e);
+                } else {
+                    let mut srv = server.lock().unwrap();
+                    srv.last_activity = std::time::Instant::now();
+                    drop(srv);
                 }
             }
+                /*
+                let srv = server.lock().unwrap();
+                let elapsed = srv.last_activity.elapsed();
+                let peer_addr = srv.peer_addr;
+                let recovery_ts = srv.recovery_ts;
+                drop(srv);
 
-            let mut srv = server.lock().unwrap();
-            srv.associated = true; //Update the associated status
+                if elapsed >= interval {
+                    if let Some(peer) = peer_addr {
+                        let seq = keepalive_seq;
+                        keepalive_seq += 1;
 
-            let peer = peer_addr.unwrap_or(Ipv4Addr::UNSPECIFIED);
-            log::info!("-> Association setup Response (peer={})", peer);
 
-            Ok(
-                builder::build_association_setup_response(
-                    header.seq_num, srv.n4_addr, srv.recovery_ts
-                )
-            )
-        }
+                        let hdr = pfcp_common::header::PfcpHeader::new_node_msg(PFCP_HEARTBEAT_REQ, seq);
+                        let mut msg = pfcp_common::builder::MsgBuilder::new(hdr);
+                        let ntp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap().as_secs() as u32;
 
-        PFCP_SESSION_ESTABLISHMENT_REQ => {
-            handle_session_establishment(&header, body, server, session_map)
-        }
-        PFCP_SESSION_DELETION_REQ => {
-            handle_session_deletion(&header, body, server, session_map)
-        }
+                        msg.add_recovery_timestamp(ntp.wrapping_add(2_208_988_800));
+                        let req = msg.finish();
 
-        other => {
-            log::warn!("Unhandled PFCP message type: {}", other);
-            anyhow::bail!("unhandled type: {}", other);
+                        log::info!("[Keepalive] -> HB to SMSF {} (seq={}, idle={:.1}s)", peer, seq, elapsed.as_secs_f32());
+
+                        if let Err(e) = socket.send_to(&req, peer).await {
+                            log::error!("[Keepalive] send error: {}", e);
+                        } else {
+                            let mut srv = server.lock().unwrap();
+                            srv.last_activity = std::time::Instant::now();
+                            drop(srv);
+                        }
+                    }
+                }
+                */
+            }
         }
     }
 }
@@ -275,4 +331,145 @@ fn handle_session_deletion( header: &PfcpHeader,
 
     log::info!("→ Session Deletion Response (seid={})", seid);
     Ok(builder::build_session_deletion_response(header.seq_num, seid))
+}
+
+/*
+async fn run_keepalive(server: Arc<Mutex<PfcpServer>>, socket: Arc<UdpSocket>)
+{
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    static SEQ: AtomicU32 = AtomicU32::new(200);
+    let interval = Duration::from_secs(15);
+
+    loop {
+        let srv = server.lock().unwrap();
+        let elapsed = srv.last_activity.elapsed();
+        let peer_addr = srv.peer_addr;
+        let recovery_ts = srv.recovery_ts;
+
+        let Some(peer) = peer_addr else {
+            tokio::time::sleep(interval).await;
+            continue;
+        };
+
+        if elapsed >= interval {
+            let seq = SEQ.fetch_add(1, Ordering::Relaxed);
+
+            let hdr = pfcp_common::header::PfcpHeader::new_node_msg(PFCP_HEARTBEAT_REQ, seq);
+            let mut msg = pfcp_common::builder::MsgBuilder::new(hdr);
+            let ntp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap().as_secs() as u32;
+            msg.add_recovery_timestamp(ntp.wrapping_add(2_208_988_800));
+            let req = msg.finish();
+
+            log::info!("[Keepalive] -> HB to SMSF {} (seq={}, idle={:.1}s)", peer, seq, elapsed.as_secs_f32());
+
+            if let Err(e) = socket.send_to(&req, peer).await {
+                log::error!("[Keepalive] send error: {}", e);
+            } else {
+                server.lock().unwrap().last_activity = std::time::Instant::now();
+            }
+
+            tokio::time::sleep(interval).await;
+        }
+        else {
+            tokio::time::sleep(interval - elapsed).await;
+        }
+    }
+}
+*/
+
+fn check_keepalive( server: &Arc<Mutex<PfcpServer>>,
+                    interval: std::time::Duration,
+                    seq: &mut u32)
+    -> Option<(Vec<u8>, SocketAddr)>
+{
+    let srv = server.lock().unwrap();
+    if srv.last_activity.elapsed() < interval || srv.peer_addr.is_none() {
+        return None;
+    }
+
+    let peer = srv.peer_addr.unwrap();
+    let recovery_ts = srv.recovery_ts;
+
+    drop(srv);
+
+    let hdr = pfcp_common::header::PfcpHeader::new_node_msg(PFCP_HEARTBEAT_REQ, *seq);
+    let mut msg = pfcp_common::builder::MsgBuilder::new(hdr);
+
+    let ntp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap().as_secs() as u32;
+
+    msg.add_recovery_timestamp(ntp.wrapping_add(2_208_988_800));
+
+    log::info!("[Keepalive] -> HB to SMSF {} (seq={})", peer, *seq);
+    *seq += 1;
+
+    Some((msg.finish(), peer))
+}
+
+/// last_activity 갱신 — sync 함수 (guard가 await 밖으로 나가지 않음)
+fn touch_activity(server: &Arc<Mutex<PfcpServer>>) {
+    server.lock().unwrap().last_activity = std::time::Instant::now();
+}
+
+fn handle_message ( data: &[u8],
+                    server: &Arc<Mutex<PfcpServer>>,
+                    session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>)
+    -> anyhow::Result<Vec<u8>>
+{
+    let (header, body) = PfcpHeader::decode(data)?;
+
+    log::info!("  msg_type={}, seq={}, seid={:?}", header.msg_type, header.seq_num, header.seid);
+
+    match header.msg_type {
+        PFCP_HEARTBEAT_REQ => {
+            let srv = server.lock().unwrap();
+            log::info!("-> Heartbeat Response (seq={}) ", header.seq_num);
+
+            Ok(builder::build_heartbeat_response(header.seq_num, srv.recovery_ts))
+        }
+
+        PFCP_ASSOCIATION_SETUP_REQ => {
+            let ies = ie::iter_ies(body);
+            let mut peer_addr = None;
+            for raw_ie in &ies {
+                if raw_ie.ie_type == PFCP_IE_NODE_ID {
+                    peer_addr = Some(ie::parse_node_id(raw_ie.value)?);
+                }
+            }
+
+            let mut srv = server.lock().unwrap();
+            srv.associated = true; //Update the associated status
+
+            // Learn SMF address
+            if let Some(smf_ip) = peer_addr {
+                srv.peer_addr = Some(SocketAddr::new(smf_ip.into(), 8805));
+                log::info!("  SMF peer addr stored: {}:8805", smf_ip);
+            }
+
+            let peer = peer_addr.unwrap_or(Ipv4Addr::UNSPECIFIED);
+            log::info!("-> Association setup Response (peer={})", peer);
+
+            Ok(
+                builder::build_association_setup_response(
+                    header.seq_num, srv.n4_addr, srv.recovery_ts
+                )
+            )
+        }
+
+        PFCP_SESSION_ESTABLISHMENT_REQ => {
+            handle_session_establishment(&header, body, server, session_map)
+        }
+        PFCP_SESSION_DELETION_REQ => {
+            handle_session_deletion(&header, body, server, session_map)
+        }
+
+        other => {
+            log::warn!("Unhandled PFCP message type: {}", other);
+            anyhow::bail!("unhandled type: {}", other);
+        }
+    }
 }

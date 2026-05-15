@@ -298,7 +298,7 @@ async fn main() -> anyhow::Result<()>
 {
     let cli = Cli::parse();
 
-    println!("{:#?}", cli);
+    // println!("{:#?}", cli);
 
     tracing_subscriber::fmt()
         .with_env_filter(&cli.log_level)
@@ -316,9 +316,8 @@ async fn main() -> anyhow::Result<()>
 
         //Bind address:  Combinded with My IP address and Port number
         std::net::SocketAddr::new(
-                // config.network.smf_n4_addr.into(),
-                std::net::Ipv4Addr::UNSPECIFIED.into(), //My address/
-                0), //Port Number
+                config.network.smf_n4_addr.into(),
+                8805), //Port Number
 
         std::net::SocketAddr::new(
             config.network.upf_n4_addr.into(),

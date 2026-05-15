@@ -3,3 +3,4 @@ pub mod header;
 pub mod dump;
 pub mod ie;
 pub mod builder;
+pub mod dict;

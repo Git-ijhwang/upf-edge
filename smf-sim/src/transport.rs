@@ -5,7 +5,7 @@ use tokio::net::UdpSocket;
 use tokio::time::{timeout, Duration};
 
 pub struct PfcpTransport {
-    socket:             UdpSocket,
+    socket:             Arc<UdpSocket>,
     peer_addr:          SocketAddr,
     response_timeout:   Duration,
     max_retries:        u32,
@@ -26,7 +26,7 @@ impl PfcpTransport  {
         tracing::info!("PFCP transport bound to {}", socket.local_addr()?);
 
         Ok( Self {
-            socket,
+            socket : Arc::new(socket),
             peer_addr,
             response_timeout: Duration::from_millis(timeout_ms),
             max_retries,

@@ -40,7 +40,9 @@ pub async fn run(
 
     tracing::info!("→ [1/5] Association Setup Request (seq={})", seq);
     let rsp = transport.send_and_recv(&req).await?;
+    crate::validator::validate_response(PFCP_ASSOCIATION_SETUP_REQ, seq, &rsp)?;
 
+    /*
     let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
     anyhow::ensure!(rsp_hdr.msg_type == PFCP_ASSOCIATION_SETUP_RSP,
         "expected type {}, got {}", PFCP_ASSOCIATION_SETUP_RSP, rsp_hdr.msg_type);
@@ -49,6 +51,7 @@ pub async fn run(
     if let Some(c) = cause {
         anyhow::ensure!(c.value[0] == CAUSE_REQUEST_ACCEPTED, "Cause={}", c.value[0]);
     }
+    */
     tracing::info!("← Association Setup Response: ACCEPTED");
     tracing::info!("✓ [1/5] Association Setup 완료");
 
@@ -93,7 +96,10 @@ pub async fn run(
 
     tracing::info!("→ [2/5] Session Establishment Request (seq={}, UE={})", seq, ue_ip);
     let rsp = transport.send_and_recv(&req).await?;
+    crate::validator::validate_response(PFCP_SESSION_ESTABLISHMENT_REQ, seq, &rsp)?;
+    let (upf_seid, upf_teid, upf_n3_addr) = crate::validator::extract_session_info(&rsp)?;
 
+    /*
     let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
     anyhow::ensure!(rsp_hdr.msg_type == PFCP_SESSION_ESTABLISHMENT_RSP,
         "expected type {}, got {}", PFCP_SESSION_ESTABLISHMENT_RSP, rsp_hdr.msg_type);
@@ -102,7 +108,6 @@ pub async fn run(
     let cause = ies.iter().find(|i| i.ie_type == PFCP_IE_CAUSE);
     if let Some(c) = cause {
         anyhow::ensure!(c.value[0] == CAUSE_REQUEST_ACCEPTED, "Cause={}", c.value[0]);
-    }
 
     // UPF가 할당한 SEID 추출
     let fseid = ies.iter().find(|i| i.ie_type == PFCP_IE_FSEID)
@@ -116,6 +121,7 @@ pub async fn run(
     let fteid = inner.iter().find(|i| i.ie_type == PFCP_IE_FTEID)
         .ok_or_else(|| anyhow::anyhow!("missing F-TEID in Created PDR"))?;
     let (upf_teid, upf_n3_addr) = ie::parse_fteid(fteid.value)?;
+    } */
 
     // 세션 상태 저장
     state.sessions.insert(cp_seid, SimSession {
@@ -165,7 +171,9 @@ pub async fn run(
 
     tracing::info!("→ [4/5] Session Deletion Request (seq={}, SEID={:#x})", seq, upf_seid);
     let rsp = transport.send_and_recv(&req).await?;
+    crate::validator::validate_response(PFCP_SESSION_DELETION_REQ, seq, &rsp)?;
 
+    /*
     let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
     anyhow::ensure!(rsp_hdr.msg_type == PFCP_SESSION_DELETION_RSP,
         "expected type {}, got {}", PFCP_SESSION_DELETION_RSP, rsp_hdr.msg_type);
@@ -173,7 +181,7 @@ pub async fn run(
     let cause = ies.iter().find(|i| i.ie_type == PFCP_IE_CAUSE);
     if let Some(c) = cause {
         anyhow::ensure!(c.value[0] == CAUSE_REQUEST_ACCEPTED, "Cause={}", c.value[0]);
-    }
+    } */
     state.sessions.remove(&cp_seid);
     tracing::info!("← Session Deletion Response: ACCEPTED");
     tracing::info!("✓ [4/5] Session Deletion 완료");

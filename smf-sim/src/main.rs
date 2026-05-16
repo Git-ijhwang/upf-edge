@@ -3,6 +3,7 @@ pub mod transport;
 pub mod state;
 pub mod scenario;
 pub mod keepalive;
+pub mod validator;
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
@@ -13,6 +14,8 @@ use pfcp_common::builder::MsgBuilder;
 use pfcp_common::header::PfcpHeader;
 use pfcp_common::ie;
 use pfcp_common::types::*;
+
+use crate::validator::validate_response;
 
 #[derive(Parser, Debug)]
 #[command(name = "smf-sim")]
@@ -95,7 +98,9 @@ async fn send_heartbeat(transport: &transport::PfcpTransport)
     tracing::info!("-> Heartbeat Request (seq={})", seq);
 
     let rsp = transport.send_and_recv(&req).await?;
+    validator::validate_response(PFCP_HEARTBEAT_REQ, seq, &rsp)?;
 
+    /*
     let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
 
     anyhow::ensure!(rsp_hdr.msg_type == PFCP_HEARTBEAT_RSP,
@@ -117,7 +122,8 @@ async fn send_heartbeat(transport: &transport::PfcpTransport)
             tracing::warn!("<- Heartbeat Response: Recovery Time Stamp IE Missing");
         }
     }
-    tracing::info!(" Success Heartbeat");
+    */
+    tracing::info!("<- Heartbeat Response Ok");
     Ok(())
 }
 
@@ -135,7 +141,9 @@ async fn  send_association_setup (transport: &transport::PfcpTransport,
     tracing::info!("-> Association Setup Request (seq={}, node={})", seq, smf_addr);
 
     let rsp = transport.send_and_recv(&req).await?;
+    validator::validate_response(PFCP_ASSOCIATION_SETUP_REQ, seq, &rsp)?;
 
+    /*
     let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
 
     anyhow::ensure!(rsp_hdr.msg_type == PFCP_ASSOCIATION_SETUP_RSP,
@@ -161,8 +169,8 @@ async fn  send_association_setup (transport: &transport::PfcpTransport,
         let addr = ie::parse_node_id(n.value)?;
         tracing::info!("<- Association Setup Response: Cause=Accepted, UPF NodeID={}", addr);
     }
-
-    tracing::info!("Success Association Setup");
+    */
+    tracing::info!("<- Association Setup Response: ACCEPTED");
     Ok(())
 }
 
@@ -217,7 +225,10 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
     tracing::info!("  Build {} bytes", req.len());
 
     let rsp = transport.send_and_recv(&req).await?;
+    validator::validate_response(PFCP_SESSION_ESTABLISHMENT_REQ, seq, &rsp)?;
+    let (upf_seid, upf_teid, upf_n3_addr) = validator::extract_session_info(&rsp)?;
 
+    /* 
     let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
     anyhow::ensure!(rsp_hdr.msg_type == PFCP_SESSION_ESTABLISHMENT_RSP,
         "expected type {}, got {}", PFCP_SESSION_ESTABLISHMENT_RSP, rsp_hdr.msg_type);
@@ -243,6 +254,7 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
     let fteid = inner_ies.iter().find(|i| i.ie_type == PFCP_IE_FTEID)
         .ok_or_else(|| anyhow::anyhow!("missing F-TEID in Created PDR"))?;
     let (upf_teid, upf_n3_addr) = ie::parse_fteid(fteid.value)?;
+    */
 
     tracing::info!("<- Session Establishment Response");
     tracing::info!("   UPF SEID  = {:#x}", upf_seid);
@@ -267,7 +279,9 @@ async fn send_session_deletion( transport: &transport::PfcpTransport,
     tracing::info!("-> Session Deletion Request (seq={}, SEID={:#x})", seq, upf_seid);
 
     let rsp = transport.send_and_recv(&req).await?;
+    validator::validate_response(PFCP_SESSION_DELETION_REQ, seq, &rsp)?;
 
+    /*
     let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
     anyhow::ensure!(rsp_hdr.msg_type == PFCP_SESSION_DELETION_RSP,
         "exptected type {}, got {}", PFCP_SESSION_DELETION_RSP, rsp_hdr.msg_type);
@@ -278,6 +292,7 @@ async fn send_session_deletion( transport: &transport::PfcpTransport,
         anyhow::ensure!(c.value[0] == CAUSE_REQUEST_ACCEPTED,
             "Cause = {}", c.value[0]);
     }
+    */
 
     tracing::info!("<- Session Deletion Response: Cause=Accepted");
     tracing::info!("Success the Session Detetion");

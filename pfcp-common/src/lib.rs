@@ -4,3 +4,4 @@ pub mod dump;
 pub mod ie;
 pub mod builder;
 pub mod dict;
+pub mod dict_ext;

@@ -4,6 +4,7 @@ pub mod state;
 pub mod scenario;
 pub mod keepalive;
 pub mod validator;
+pub mod tui;
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;

@@ -49,6 +49,7 @@ enum Commands {
         #[command(subcommand)]
         message: SingleMessage,
     },
+    Interactive,
 }
 
 #[derive(Subcommand, Debug)]
@@ -380,6 +381,13 @@ async fn main() -> anyhow::Result<()>
                 _ => anyhow::bail!("Scenario {} not implemented yet", scenario),
             }
         },
+
+        Commands::Interactive => {
+            let transport = std::sync::Arc::new(transport);
+            let sim_state = state::SimState::new(&config.session);
+            tui::runner::run(&config, transport, sim_state).await?;
+        }
+
 
     }
 

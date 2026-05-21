@@ -10,9 +10,6 @@ pub enum Command {
     Quit,
 }
 
-#[derive(Debug)]
-pub struct ParseError(pub String);
-
 impl Command {
     pub fn from_input(input: &str) -> Result<Command, ParseError> {
         let parts: Vec<&str> = input.trim().split_whitespace().collect();
@@ -66,6 +63,18 @@ impl Command {
         "
     }
 }
+
+
+
+#[derive(Debug)]
+pub struct ParseError(pub String);
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 
 fn parse_seid(s: &str) -> Result<u64, ParseError>
 {

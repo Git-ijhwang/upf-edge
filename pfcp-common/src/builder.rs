@@ -149,9 +149,11 @@ pub fn build_heartbeat_response(seq_num: u32, recovery_ts: u32) -> Vec<u8> {
     msg.finish()
 }
 
-pub fn build_association_setup_response(
-    seq_num: u32, our_addr: Ipv4Addr, recovery_ts: u32,
-) -> Vec<u8> {
+pub fn build_association_setup_response( seq_num: u32,
+                                        our_addr: Ipv4Addr,
+                                        recovery_ts: u32,)
+    -> Vec<u8>
+{
     let hdr = PfcpHeader::new_node_msg(PFCP_ASSOCIATION_SETUP_RSP, seq_num);
     let mut msg = MsgBuilder::new(hdr);
     msg.add_node_id_v4(our_addr);
@@ -161,18 +163,91 @@ pub fn build_association_setup_response(
     msg.finish()
 }
 
-pub fn build_session_establishment_response(
-    seq_num: u32, cp_seid: u64, our_seid: u64, our_addr: Ipv4Addr,
+pub fn build_session_establishment_request(seq: u32, smf_addr: std::net::Ipv4Addr,
+                                            cp_seid: u64, ue_ip: std::net::Ipv4Addr,
+                                            gnb_addr: std::net::Ipv4Addr, gnb_teid: u32)
+    -> Vec<u8>
+{
+    let hdr = PfcpHeader::new_session_msg(
+        PFCP_SESSION_ESTABLISHMENT_REQ, 0, seq
+    );
+
+    let mut msg = MsgBuilder::new(hdr);
+
+    msg.add_node_id_v4(smf_addr);
+    msg.add_fseid(cp_seid, smf_addr);
+
+    // Uplink PDR: gNB → UPF → Core
+    msg.add_create_pdr(
+        &PdrParams {
+            pdr_id: 1, precedence: 100,
+            source_interface: INTERFACE_ACCESS,
+            fteid_choose: true,
+            ue_ip: Some(ue_ip),
+            far_id: 1,
+            outer_header_removal: true,
+        }
+    );
+
+    // Downlink PDR: Core → UPF → gNB
+    msg.add_create_pdr(
+        &PdrParams {
+            pdr_id: 2, precedence: 100,
+            source_interface: INTERFACE_CORE,
+            fteid_choose: false,
+            ue_ip: Some(ue_ip),
+            far_id: 2,
+            outer_header_removal: false,
+        }
+    );
+
+    // Uplink FAR: Core로 포워딩
+    msg.add_create_far(
+        &FarParams {
+            far_id: 1,
+            apply_action: ACTION_FORW,
+            dest_interface: INTERFACE_CORE,
+            outer_header_creation: None,
+        }
+    );
+
+    // Downlink FAR: gNB로 GTP-U encap 포워딩
+    msg.add_create_far(
+        &FarParams {
+            far_id: 2,
+            apply_action: ACTION_FORW,
+            dest_interface: INTERFACE_ACCESS,
+            outer_header_creation: Some(OuterHeaderCreation {
+                teid: gnb_teid,
+                peer_addr: gnb_addr,
+                port: 2152,
+            }),
+        }
+    );
+
+    msg.finish()
+}
+
+
+
+pub fn build_session_establishment_response( seq_num: u32,
+                                            cp_seid: u64,
+                                            our_seid: u64,
+                                            our_addr: Ipv4Addr,
     created_pdrs: &[(u16, u32, Ipv4Addr)],
 ) -> Vec<u8> {
-    let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_ESTABLISHMENT_RSP, cp_seid, seq_num);
+    let hdr = PfcpHeader::new_session_msg(
+        PFCP_SESSION_ESTABLISHMENT_RSP, cp_seid, seq_num);
     let mut msg = MsgBuilder::new(hdr);
+
     msg.add_node_id_v4(our_addr);
     msg.add_cause(CAUSE_REQUEST_ACCEPTED);
     msg.add_fseid(our_seid, our_addr);
+
     for &(pdr_id, teid, addr) in created_pdrs {
         msg.add_created_pdr(pdr_id, teid, addr);
     }
+
     msg.finish()
 }
 

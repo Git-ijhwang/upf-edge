@@ -16,5 +16,10 @@ clap = { version = "4.6.1", features = ["derive"] }
 chrono = "0.4.44"
 
 ratatui = "0.29"
-crossterm = "0.28"
+# crossterm = "0.28"
+crossterm = { version = "0.28", features = ["event-stream"] }
+
 tui-textarea = { version = "0.7", features = ["crossterm"] }
+
+parking_lot = "0.12"
+futures = "0.3"

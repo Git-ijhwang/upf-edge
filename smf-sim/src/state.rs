@@ -3,6 +3,7 @@ use std::net::Ipv4Addr;
 use crate::config::SessionConfig;
 
 
+#[derive(Clone)]
 pub struct SimSession {
     pub cp_seid:     u64,
     pub upf_seid:    u64,
@@ -14,6 +15,7 @@ pub struct SimSession {
     pub created_at:  std::time::Instant,
 }
 
+#[derive(Clone)]
 pub struct SimState {
     next_ue_ip:     u32,
     ue_ip_end:      u32,

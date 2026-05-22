@@ -3,6 +3,17 @@ use chrono::Local;
 
 use crate::state::SimSession;
 
+pub enum AppEvent {
+    /// 로그 메시지
+    Log(String),
+    /// Association 상태 변경
+    AssociationChanged(bool),
+    /// Heartbeat 수신 시각 업데이트
+    HeartbeatUpdated,
+    /// 세션 목록 업데이트
+    SessionsUpdated(Vec<SimSession>),
+}
+
 pub struct LogEntry {
     pub time: String,
     pub message: String,

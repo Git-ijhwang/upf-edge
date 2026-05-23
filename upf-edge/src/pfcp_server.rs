@@ -476,7 +476,7 @@ fn handle_message ( data: &[u8],
 
     let val = pfcp_common::dict_ext::validate(header.msg_type, body);
     if !val.is_ok() {
-        log::warn!("  [Dict] Mandatory IE missing in {}: {}",
+        log::warn!("  [Dict] Mandatory IE missing in {}: {:?}",
             pfcp_common::dict_ext::lookup(header.msg_type)
                 .map(|s| s.name)
                 .unwrap_or("Unknown"),

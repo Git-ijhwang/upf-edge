@@ -45,7 +45,6 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect)
 
     let sessions = Span::raw(format!("  │  세션: {}개", app.session_count()));
     let hb = Span::raw(format!("  │  HB: {}초 전", app.last_hb_secs));
-
     let line = Line::from(vec![assoc, sessions, hb]);
 
     let block = Block::default()

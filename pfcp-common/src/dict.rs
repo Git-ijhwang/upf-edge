@@ -54,7 +54,7 @@ pub static PFCP_DICT: phf::Map<u8, MessageSpec> = phf_map! {
         ],
     },
 
-    2u8 => MessageSpec {                    // PFCP_HEARTBEAT_RSP
+    2u8 => MessageSpec {
         msg_type: PFCP_HEARTBEAT_RSP,
         name:     "Heartbeat Response",
         ies: &[
@@ -106,6 +106,42 @@ pub static PFCP_DICT: phf::Map<u8, MessageSpec> = phf_map! {
             IeSpec { ie_type: PFCP_IE_CAUSE,      presence: Presence::Mandatory, name: "Cause" },
             IeSpec { ie_type: PFCP_IE_FSEID,      presence: Presence::Conditional, name: "FSEID" },
             IeSpec { ie_type: PFCP_IE_CREATE_PDR, presence: Presence::Conditional, name: "Create PDR" },
+        ],
+    },
+
+    // ── Session Modification ─────────────────────────────────
+    52u8 => MessageSpec {
+        msg_type: PFCP_SESSION_MODIFICATION_REQ,
+        name:     "Session Modification Request",
+        ies: &[
+            IeSpec { ie_type: PFCP_IE_FSEID,      presence: Presence::Mandatory,   name: "F-SEID" },
+            IeSpec { ie_type: PFCP_IE_UPDATE_PDR,  presence: Presence::Conditional, name: "Update PDR" },
+            IeSpec { ie_type: PFCP_IE_UPDATE_FAR,  presence: Presence::Conditional, name: "Update FAR" },
+            IeSpec { ie_type: PFCP_IE_REMOVE_PDR,  presence: Presence::Optional,    name: "Remove PDR" },
+            IeSpec { ie_type: PFCP_IE_REMOVE_FAR,  presence: Presence::Optional,    name: "Remove FAR" },
+        ],
+    },
+    53u8 => MessageSpec {
+        msg_type: PFCP_SESSION_MODIFICATION_RSP,
+        name:     "Session Modification Response",
+        ies: &[
+            IeSpec { ie_type: PFCP_IE_CAUSE,       presence: Presence::Mandatory,   name: "Cause" },
+            IeSpec { ie_type: PFCP_IE_CREATED_PDR, presence: Presence::Optional,    name: "Created PDR" },
+        ],
+    },
+
+    // ── Session Deletion ─────────────────────────────────────
+    54u8 => MessageSpec {
+        msg_type: PFCP_SESSION_DELETION_REQ,
+        name:     "Session Deletion Request",
+        ies: &[],   // 세션 식별은 헤더의 SEID로
+    },
+    55u8 => MessageSpec {
+        msg_type: PFCP_SESSION_DELETION_RSP,
+        name:     "Session Deletion Response",
+        ies: &[
+            IeSpec { ie_type: PFCP_IE_CAUSE,                       presence: Presence::Mandatory, name: "Cause" },
+            IeSpec { ie_type: PFCP_IE_USAGE_REPORT_IN_SESS_MEL_RSP, presence: Presence::Optional, name: "Usage Report" },
         ],
     },
 

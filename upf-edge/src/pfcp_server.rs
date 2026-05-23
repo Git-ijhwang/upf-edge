@@ -11,6 +11,7 @@ use upf_edge_common::{SessionInfo, SessionKey};
 
 use pfcp_common::header::PfcpHeader;
 use pfcp_common::builder;
+use pfcp_common::dict_ext;
 use pfcp_common::ie;
 use pfcp_common::types::*;
 
@@ -43,10 +44,16 @@ pub struct PfcpServer {
 
     /// Last time when PFCP msg receive
     last_activity: std::time::Instant,
+
+    // smf_pfcp_port: u16,
+
+    /// TUI 이벤트 채널 (TUI 미사용 시 None)
+    tx_tui: Option<tokio::sync::mpsc::Sender<crate::tui::app::AppEvent>>,
 }
 
 
-impl PfcpServer {
+impl PfcpServer
+{
     pub fn new(n4_addr: Ipv4Addr, n3_addr: Ipv4Addr)
         -> Self
     {
@@ -65,19 +72,54 @@ impl PfcpServer {
             sessions: std::collections::HashMap::new(),
             peer_addr: None,
             last_activity: std::time::Instant::now(),
+            tx_tui: None,
         }
     }
 
     fn alloc_seid (&mut self) -> u64 {
         let s = self.next_seid;
         self.next_seid += 1;
+
         s
     }
 
     fn alloc_teid (&mut self) -> u32 {
         let t = self.next_teid;
         self.next_teid += 1;
+
         t
+    }
+
+    pub fn set_tui_sender (&mut self,
+        sender: tokio::sync::mpsc::Sender<crate::tui::app::AppEvent>) {
+        self.tx_tui = Some(sender);
+    }
+
+    fn tui_log(&self, msg: impl Into<String>) {
+        if let Some(tx) = &self.tx_tui {
+            let _ = tx.try_send(crate::tui::app::AppEvent::Log(msg.into()));
+        }
+    }
+
+    fn tui_sessions_updated(&self) {
+        if let Some(tx) = &self.tx_tui {
+            let sessions = self.sessions.iter().map(|(&seid, &ue_ip)| {
+                crate::tui::app::SessionEntry {
+                    seid,
+                    ue_ip,
+                    teid: 0, // TEID 정보는 별도 관리 필요 (현재 세션 맵에 없음)
+                    gnb_ip: Ipv4Addr::UNSPECIFIED, // gNB IP 정보도 별도 관리 필요
+                    duration: std::time::Instant::now(), // Duration 계산은 TUI에서 처리
+                }
+            }).collect();
+            let _ = tx.try_send(crate::tui::app::AppEvent::SessionsUpdated(sessions));
+        }
+    }
+
+    fn tui_send(&self, event: crate::tui::app::AppEvent) {
+        if let Some(tx) = &self.tx_tui {
+            let _ = tx.try_send(event);
+        }
     }
 }
 
@@ -280,6 +322,9 @@ fn handle_session_establishment ( header: &PfcpHeader,
 
     srv.sessions.insert(local_seid, ue_ip);
 
+    srv.tui_sessions_updated();
+    srv.tui_log(format!("✅ Session 추가: UE={} SEID={:#x}", ue_ip, local_seid));
+
     log::info!("  Session created: seid={}, UE={}, TEID={:#x}", local_seid, ue_ip, teid);
     log::info!("  eBPF map: UE={} → TEID={}, gNB={}", ue_ip, teid, gnb_info.peer_addr);
 
@@ -312,6 +357,11 @@ fn handle_session_deletion( header: &PfcpHeader,
         let mut svr = server.lock().unwrap();
         svr.sessions.remove(&seid)
     };
+    {
+        let mut svr = server.lock().unwrap();
+        svr.tui_sessions_updated();
+        svr.tui_log(format!("🗑️ Session Deleted: SEID={:#x}", seid)); 
+    }
 
     match ue_ip {
         Some(ue_ip) => {
@@ -424,10 +474,26 @@ fn handle_message ( data: &[u8],
 
     log::info!("  msg_type={}, seq={}, seid={:?}", header.msg_type, header.seq_num, header.seid);
 
+    let val = pfcp_common::dict_ext::validate(header.msg_type, body);
+    if !val.is_ok() {
+        log::warn!("  [Dict] Mandatory IE missing in {}: {}",
+            pfcp_common::dict_ext::lookup(header.msg_type)
+                .map(|s| s.name)
+                .unwrap_or("Unknown"),
+            val.missing
+        );
+    }
+    else if pfcp_common::dict_ext::lookup(header.msg_type).is_some() {
+        log::info!("  [Dict] {} - IE validation passed",
+            pfcp_common::dict_ext::lookup(header.msg_type).unwrap().name);
+    }
+
     match header.msg_type {
         PFCP_HEARTBEAT_REQ => {
             let srv = server.lock().unwrap();
             log::info!("-> Heartbeat Response (seq={}) ", header.seq_num);
+            srv.tui_send(crate::tui::app::AppEvent::HeartbeatUpdated);
+            srv.tui_log(format!("<- HB Response (seq={})", header.seq_num));
 
             Ok(builder::build_heartbeat_response(header.seq_num, srv.recovery_ts))
         }
@@ -443,6 +509,9 @@ fn handle_message ( data: &[u8],
 
             let mut srv = server.lock().unwrap();
             srv.associated = true; //Update the associated status
+
+            srv.tui_log("✅ UPF Association Established");
+            srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(true));
 
             // Learn SMF address
             if let Some(smf_ip) = peer_addr {

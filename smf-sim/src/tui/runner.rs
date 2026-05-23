@@ -8,6 +8,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use futures::StreamExt;
 use ratatui::{Terminal, backend::CrosstermBackend, text};
 use tui_textarea::TextArea;
 
@@ -22,7 +23,6 @@ use super::app::{App, AppEvent};
 use super::command::Command as TuiCommand;
 use crossterm::event::EventStream;
 
-use futures::StreamExt;
 
 use pfcp_common::builder::MsgBuilder;
 use pfcp_common::header::PfcpHeader;
@@ -199,14 +199,14 @@ async fn run_loop( terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
                     state: SimState)
     -> anyhow::Result<()>
 {
+    let mut app = App::new();
+    let mut textarea = TextArea::default();
+    textarea.set_placeholder_text("Input Command..");
+
     let mut event_stream = EventStream::new();
 
     let state_arc = Arc::new(parking_lot::Mutex::new(state));
     // let state_arc = Arc::new(std::sync::Mutex::new(state));
-
-    let mut app = App::new();
-    let mut textarea = TextArea::default();
-    textarea.set_placeholder_text("Input Command..");
 
     app.log(" smf-sim TUI Start! Check the'help' command.");
 

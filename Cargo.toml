@@ -35,11 +35,6 @@ log = { version = "0.4.22", default-features = false }
 tokio = { version = "1.40.0", default-features = false }
 which = { version = "6.0.0", default-features = false }
 
-ratatui    = "0.29"
-crossterm  = { version = "0.28", features = ["event-stream"] }
-futures    = "0.3"
-sysinfo    = "0.33"
-parking_lot = "0.12"
 
 # `std` feature is currently required to build `clap`.
 #

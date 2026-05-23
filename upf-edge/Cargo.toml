@@ -16,14 +16,23 @@ env_logger = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 tokio = { workspace = true, features = [
-    "macros",
-    "rt",
-    "rt-multi-thread",
-    "net",
-    "signal",
-    "time",
-] }
+        "macros",
+        "rt",
+        "rt-multi-thread",
+        "net",
+        "signal",
+        "time",
+        "sync",
+    ] }
 clap = { workspace = true, features = ["derive"] }
+chrono = "0.4"
+ratatui    = "0.29"
+crossterm  = { version = "0.28", features = ["event-stream"] }
+futures    = "0.3"
+sysinfo    = "0.33"
+parking_lot = "0.12"
+tui-textarea = { version = "0.7", features = ["crossterm"] }
+
 [build-dependencies]
 anyhow = { workspace = true }
 aya-build = { workspace = true }

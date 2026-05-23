@@ -12,6 +12,7 @@ use upf_edge_common::{SessionInfo, SessionKey};
 use std::net::Ipv4Addr;
 
 mod pfcp_server;
+mod tui;
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -28,6 +29,22 @@ struct Opt {
     /// UPF N3 (GTP-U) address
     #[clap(long, default_value = "127.22.0.8")]
     n3_addr: Ipv4Addr,
+
+    #[clap(long, default_value_t = false)]
+    tui: bool,
+}
+
+struct TuiLogger {
+    tx: tokio::sync::mpsc::Sender<crate::tui::app::AppEvent>,
+}
+
+impl log::Log for TuiLogger {
+    fn enabled(&self, _: &log::Metadata) -> bool { true }
+    fn log(&self, record: &log::Record) {
+        let msg = format!("[{}] {}", record.level(), record.args());
+        let _ = self.tx.try_send(crate::tui::app::AppEvent::Log(msg));
+    }
+    fn flush(&self) {}
 }
 
 #[tokio::main]
@@ -118,7 +135,7 @@ async fn main() -> anyhow::Result<()> {
     let session_map = Arc::new(Mutex::new(session_map));
     let pfcp_map: Arc<Mutex<HashMap<_, SessionKey, SessionInfo>>> = session_map.clone();
 
-    let Opt { iface_n3, iface_n6, n4_addr, n3_addr } = opt;
+    let Opt { iface_n3, iface_n6, n4_addr, n3_addr, tui } = opt;
 
     // for N3 Interface
     let program_n3: &mut Xdp = ebpf.program_mut("upf_edge_n3").unwrap().try_into()?;
@@ -137,11 +154,41 @@ async fn main() -> anyhow::Result<()> {
 
     let pfcp = Arc::new(Mutex::new(pfcp_server::PfcpServer::new(n4_addr, n3_addr)));
 
-    tokio::spawn(async move {
-        if let Err(e) = pfcp_server::run(pfcp, pfcp_map).await {
-            log::error!("PFCP Server error: {}", e);
-        }
-    });
+    if tui {
+        let (tx_tui, rx_tui) = tokio::sync::mpsc::channel(100);
+
+        let tx_sync = tx_tui.clone();
+
+        // env_logger 대신 TuiLogger 등록
+        log::set_boxed_logger(Box::new(TuiLogger {
+            tx: tx_tui.clone()  // ← 여기서 문제 — try_send 필요
+        })).ok();
+        log::set_max_level(log::LevelFilter::Info);
+
+
+        pfcp.lock().unwrap().set_tui_sender(tx_tui);
+        tokio::spawn(async move {
+            if let Err(e) = pfcp_server::run(pfcp, pfcp_map).await {
+                log::error!("PFCP Server error: {}", e);
+            }
+        });
+
+        tui::runner::run(rx_tui).await?;
+    }
+    else {
+        env_logger::init();
+
+        tokio::spawn(async move {
+            if let Err(e) = pfcp_server::run(pfcp, pfcp_map).await {
+                log::error!("PFCP Server error: {}", e);
+            }
+        });
+
+        println!("Waiting for Ctrl-C...");
+
+        signal::ctrl_c().await?;
+        println!("Exiting...");
+    }
 
     println!("PFCP Server started on {}:8805", n4_addr);
     println!("Waiting for Ctrl-C...");

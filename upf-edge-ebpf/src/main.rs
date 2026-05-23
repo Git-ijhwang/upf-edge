@@ -124,7 +124,6 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
         }
     };
     if udp_dst != 2152 {
-        info!(ctx, "Not 2152 port {}", udp_dst);
         return Ok(xdp_action::XDP_PASS);
     }
 

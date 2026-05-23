@@ -179,7 +179,11 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
 
                 match handle_message(data, &server, &session_map) {
                     Ok(response) => {
-                        if let Err(e) = socket.send_to(&response, src).await {
+                        if response.is_empty() {
+                            // log::info!("No response sent for this message");
+                            // continue;
+                        }
+                        else if let Err(e) = socket.send_to(&response, src).await {
                             log::error!("send error to {}: {}", src, e);
                         }
                         else {
@@ -537,8 +541,14 @@ fn handle_message ( data: &[u8],
         }
 
         other => {
-            log::warn!("Unhandled PFCP message type: {}", other);
-            anyhow::bail!("unhandled type: {}", other);
+            if other % 2 == 0 {
+                log::warn!("Ignored response msg_type={}", other);
+                Ok(vec![])
+            }
+            else {
+                log::warn!("Unhandled PFCP message type: {}", other);
+                anyhow::bail!("unhandled type: {}", other);
+            }
         }
     }
 }

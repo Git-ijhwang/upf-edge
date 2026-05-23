@@ -51,7 +51,9 @@ impl log::Log for TuiLogger {
 async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
 
-    env_logger::init();
+    if !opt.tui {
+        env_logger::init();
+    }
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
@@ -176,6 +178,7 @@ async fn main() -> anyhow::Result<()> {
         tui::runner::run(rx_tui).await?;
     }
     else {
+        /// Not Tui
         env_logger::init();
 
         tokio::spawn(async move {

@@ -387,52 +387,6 @@ fn handle_session_deletion( header: &PfcpHeader,
     Ok(builder::build_session_deletion_response(header.seq_num, seid))
 }
 
-/*
-async fn run_keepalive(server: Arc<Mutex<PfcpServer>>, socket: Arc<UdpSocket>)
-{
-    use std::sync::atomic::{AtomicU32, Ordering};
-
-    static SEQ: AtomicU32 = AtomicU32::new(200);
-    let interval = Duration::from_secs(15);
-
-    loop {
-        let srv = server.lock().unwrap();
-        let elapsed = srv.last_activity.elapsed();
-        let peer_addr = srv.peer_addr;
-        let recovery_ts = srv.recovery_ts;
-
-        let Some(peer) = peer_addr else {
-            tokio::time::sleep(interval).await;
-            continue;
-        };
-
-        if elapsed >= interval {
-            let seq = SEQ.fetch_add(1, Ordering::Relaxed);
-
-            let hdr = pfcp_common::header::PfcpHeader::new_node_msg(PFCP_HEARTBEAT_REQ, seq);
-            let mut msg = pfcp_common::builder::MsgBuilder::new(hdr);
-            let ntp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap().as_secs() as u32;
-            msg.add_recovery_timestamp(ntp.wrapping_add(2_208_988_800));
-            let req = msg.finish();
-
-            log::info!("[Keepalive] -> HB to SMSF {} (seq={}, idle={:.1}s)", peer, seq, elapsed.as_secs_f32());
-
-            if let Err(e) = socket.send_to(&req, peer).await {
-                log::error!("[Keepalive] send error: {}", e);
-            } else {
-                server.lock().unwrap().last_activity = std::time::Instant::now();
-            }
-
-            tokio::time::sleep(interval).await;
-        }
-        else {
-            tokio::time::sleep(interval - elapsed).await;
-        }
-    }
-}
-*/
 
 fn check_keepalive( server: &Arc<Mutex<PfcpServer>>,
                     interval: std::time::Duration,

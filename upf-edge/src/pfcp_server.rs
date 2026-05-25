@@ -15,6 +15,13 @@ use pfcp_common::dict_ext;
 use pfcp_common::ie;
 use pfcp_common::types::*;
 
+#[derive(Clone, Debug, Copy)]
+pub struct SessionData {
+    pub ue_ip: Ipv4Addr,
+    pub teid: u32,
+    pub gnb_ip: Ipv4Addr,
+    pub cp_seid: u64,
+}
 
 ///PFCP Server Status
 pub struct PfcpServer {
@@ -37,7 +44,7 @@ pub struct PfcpServer {
     next_teid: u32,
 
     /// SEID → UE IP 매핑 (Session Deletion 시 맵 제거용)
-    sessions: std::collections::HashMap<u64, Ipv4Addr>,
+    sessions: std::collections::HashMap<u64, SessionData>,
 
     /// SMF Address learned during Association procedure
     peer_addr: Option<SocketAddr>,
@@ -49,6 +56,9 @@ pub struct PfcpServer {
 
     /// TUI 이벤트 채널 (TUI 미사용 시 None)
     tx_tui: Option<tokio::sync::mpsc::Sender<crate::tui::app::AppEvent>>,
+
+    session_store: Option<std::sync::Arc<crate::session_store::SessionStore>>,
+
 }
 
 
@@ -73,6 +83,7 @@ impl PfcpServer
             peer_addr: None,
             last_activity: std::time::Instant::now(),
             tx_tui: None,
+            session_store: None,
         }
     }
 
@@ -95,6 +106,11 @@ impl PfcpServer
         self.tx_tui = Some(sender);
     }
 
+    pub fn set_session_store(&mut self, store: crate::session_store::SessionStore) {
+        self.session_store = Some(std::sync::Arc::new(store));
+    }
+
+
     fn tui_log(&self, msg: impl Into<String>) {
         if let Some(tx) = &self.tx_tui {
             let _ = tx.try_send(crate::tui::app::AppEvent::Log(msg.into()));
@@ -103,12 +119,12 @@ impl PfcpServer
 
     fn tui_sessions_updated(&self) {
         if let Some(tx) = &self.tx_tui {
-            let sessions = self.sessions.iter().map(|(&seid, &ue_ip)| {
+            let sessions = self.sessions.iter().map(|(&seid, data)| {
                 crate::tui::app::SessionEntry {
                     seid,
-                    ue_ip,
-                    teid: 0, // TEID 정보는 별도 관리 필요 (현재 세션 맵에 없음)
-                    gnb_ip: Ipv4Addr::UNSPECIFIED, // gNB IP 정보도 별도 관리 필요
+                    ue_ip:  data.ue_ip,
+                    teid:   data.teid,
+                    gnb_ip: data.gnb_ip,
                     duration: std::time::Instant::now(), // Duration 계산은 TUI에서 처리
                 }
             }).collect();
@@ -136,6 +152,32 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
 
     let socket = Arc::new(UdpSocket::bind(SocketAddr::new(n4_addr.into(), 8805)).await?);
     log::info!("PFCP server listening on {}:8805", n4_addr);
+
+    // 서버 시작 시 Redis에서 기존 세션 불러와 eBPF 맵에 복원
+    {
+        let store = server.lock().unwrap().session_store.clone();
+        if let Some(store) = store {
+            match store.load_all().await {
+                Ok(sessions) => {
+                    if !sessions.is_empty() {
+                        log::info!("[Redis] Start to load {} sessions from Redis", sessions.len());
+
+                        let mut srv = server.lock().unwrap();
+
+                        for (seid, data) in sessions {
+                            log::info!("[Redis] Loading session from Redis: seid={:#x}, UE={}",
+                                seid, data.ue_ip);
+                            srv.sessions.insert(seid, data);
+                        }
+                        srv.tui_sessions_updated();
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[Redis] Failed to load session from Redis: {}", e);
+                }
+            }
+        }
+    }
 
     let mut buf = [0u8; 4096];
     let interval = std::time::Duration::from_secs(15);
@@ -324,7 +366,27 @@ fn handle_session_establishment ( header: &PfcpHeader,
         map.insert(key, info, 0)?;
     }
 
-    srv.sessions.insert(local_seid, ue_ip);
+    srv.sessions.insert(local_seid, SessionData {
+        ue_ip,
+        teid,
+        gnb_ip: gnb_info.peer_addr,
+        cp_seid
+    });
+
+    if let Some(store) = srv.session_store.clone() {
+        let data = SessionData {
+            ue_ip,
+            teid,
+            gnb_ip: gnb_info.peer_addr,
+            cp_seid
+        };
+
+        tokio::spawn(async move {
+            if let Err(e) = store.save(local_seid, &data).await {
+                log::error!("Failed to save session to Redis: {}", e);
+            }
+        });
+    }
 
     srv.tui_sessions_updated();
     srv.tui_log(format!("✅ Session 추가: UE={} SEID={:#x}", ue_ip, local_seid));
@@ -357,7 +419,7 @@ fn handle_session_deletion( header: &PfcpHeader,
     let seid = header.seid.unwrap_or(0);
 
     // 1. Search UE IP with SEID
-    let ue_ip = {
+    let session_data = {
         let mut svr = server.lock().unwrap();
         svr.sessions.remove(&seid)
     };
@@ -367,20 +429,28 @@ fn handle_session_deletion( header: &PfcpHeader,
         svr.tui_log(format!("🗑️ Session Deleted: SEID={:#x}", seid)); 
     }
 
-    match ue_ip {
-        Some(ue_ip) => {
+    match session_data {
+        Some(data) => {
             let key = SessionKey {
-                ue_ip: u32::from(ue_ip).to_be(),
+                ue_ip: u32::from(data.ue_ip).to_be(),
             };
             {
                 let mut map = session_map.lock().unwrap();
                 map.remove(&key);
             }
-            log::info!("  eBPF map: removed UE={}", ue_ip);
+            log::info!("  eBPF map: removed UE={}", data.ue_ip);
         }
         None => {
             log::warn!("  Session not found for SEID={}", seid);
         }
+    }
+
+    if let Some(store) = server.lock().unwrap().session_store.clone() {
+        tokio::spawn(async move {
+            if let Err(e) = store.delete(seid).await {
+                log::error!("Failed to delete session from Redis: {}", e);
+            }
+        });
     }
 
     log::info!("→ Session Deletion Response (seid={})", seid);

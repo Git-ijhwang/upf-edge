@@ -12,6 +12,7 @@ use upf_edge_common::{SessionInfo, SessionKey};
 use std::net::Ipv4Addr;
 
 mod pfcp_server;
+mod session_store;
 mod tui;
 
 #[derive(Debug, Parser)]
@@ -105,7 +106,6 @@ async fn main() -> anyhow::Result<()> {
             addr: [0x52, 0x55, 0x55, 0x2e, 0xff, 0xc6],  // eth0 자신의 MAC
 
         }, 0)?;
-        println!("GW Mac set: 52:55:55:2e:ff:c6");
 
         /*
         let mut session_map: HashMap<_, SessionKey, SessionInfo> = 
@@ -155,6 +155,16 @@ async fn main() -> anyhow::Result<()> {
 
 
     let pfcp = Arc::new(Mutex::new(pfcp_server::PfcpServer::new(n4_addr, n3_addr)));
+
+    match session_store::SessionStore::new("redis://127.0.0.1/") {
+        Ok(store) => {
+            pfcp.lock().unwrap().set_session_store(store);
+            log::info!("[Redis] SessionStore initialized");
+        }
+        Err(e) => {
+            log::error!("Failed to initialize SessionStore: {}", e);
+        }
+    }
 
     if tui {
         let (tx_tui, rx_tui) = tokio::sync::mpsc::channel(100);

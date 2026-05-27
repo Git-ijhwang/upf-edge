@@ -30,7 +30,7 @@ use pfcp_common::types::*;
 
 async fn do_association(transport: &PfcpTransport,
                         smf_addr: std::net::Ipv4Addr)
-    -> anyhow::Result<()>
+    -> anyhow::Result<Option<u32>>
 {
     let seq = 1u32;
     let ntp = std::time::SystemTime::now()
@@ -41,7 +41,8 @@ async fn do_association(transport: &PfcpTransport,
     let mut msg = MsgBuilder::new(hdr);
 
     msg.add_node_id_v4(smf_addr);
-    msg.add_recovery_timestamp(ntp.wrapping_add(2_208_988_800));
+    // msg.add_recovery_timestamp(ntp.wrapping_add(2_208_988_800));
+    msg.add_recovery_timestamp(crate::recovery_ts());
 
     let req = msg.finish();
 
@@ -49,7 +50,7 @@ async fn do_association(transport: &PfcpTransport,
 
     crate::validator::validate_response(PFCP_ASSOCIATION_SETUP_REQ, seq, &rsp)?;
 
-    Ok(())
+    Ok(crate::validator::extract_recovery_ts(&rsp))
 }
 
 
@@ -216,20 +217,31 @@ async fn run_loop( terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
         let t = transport.clone();
         let cfg_smf_addr = config.network.smf_n4_addr;
         let tx2 = tx.clone();
+        let state_for_assoc = state_arc.clone();
 
         tokio::spawn(async move {
             tx2.send(AppEvent::Log("upf-edge Connecting....".to_string())).await.ok();
 
-            match do_association(&t, cfg_smf_addr).await {
-                Ok(_) => {
+            loop {
+                match do_association(&t, cfg_smf_addr).await {
+                Ok(upf_ts) => {
+                    if let Some(ts)= upf_ts {
+                        state_for_assoc.lock().upf_recovery_ts = Some(ts);
+                    }
+
                     tx2.send(AppEvent::AssociationChanged(true)).await.ok();
                     tx2.send(AppEvent::Log("Connected to upf-edge".to_string())).await.ok();
+
+                    break;
                 }
 
                 Err(e) => {
                     // tx2.send(AppEvent::AssociationChanged(false)).await.ok();
-                    tx2.send(AppEvent::Log(format!("Failed to connect to upf-edge: {}", e))).await.ok();
+                    tx2.send(AppEvent::Log(format!("Failed to connect to upf-edge, Retry after 10 secs, {}", e))).await.ok();
+
+                    tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
                 }
+            }
             }
         });
     }

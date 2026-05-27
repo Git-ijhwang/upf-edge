@@ -31,16 +31,38 @@ pub async fn run(
     tracing::info!("═══════════════════════════════════════");
 
     // ── 1. Association Setup ──────────────────────────
-    let seq = state.next_seq_num();
-    let hdr = PfcpHeader::new_node_msg(PFCP_ASSOCIATION_SETUP_REQ, seq);
-    let mut msg = MsgBuilder::new(hdr);
-    msg.add_node_id_v4(config.network.smf_n4_addr);
-    msg.add_recovery_timestamp(crate::recovery_ts());
-    let req = msg.finish();
 
-    tracing::info!("→ [1/5] Association Setup Request (seq={})", seq);
-    let rsp = transport.send_and_recv(&req).await?;
-    crate::validator::validate_response(PFCP_ASSOCIATION_SETUP_REQ, seq, &rsp)?;
+    let mut cnt_tries = 0u32;
+
+    let rsp = loop {
+        let seq = state.next_seq_num();
+        let hdr = PfcpHeader::new_node_msg(PFCP_ASSOCIATION_SETUP_REQ, seq);
+        let mut msg = MsgBuilder::new(hdr);
+        msg.add_node_id_v4(config.network.smf_n4_addr);
+        msg.add_recovery_timestamp(crate::recovery_ts());
+        let req = msg.finish();
+
+        cnt_tries += 1;
+
+        tracing::info!("-> [{}/5] Association Setup Request Seq={}", cnt_tries, seq);
+
+        match transport.send_and_recv(&req).await {
+            Ok(rsp) => match crate::validator::validate_response(PFCP_ASSOCIATION_SETUP_REQ, seq, &rsp) {
+                Ok(_) => break rsp,
+                Err(e) => {
+                    let wait_secs = std::cmp::min(3u64 * 2u64.pow(cnt_tries - 1), 30);
+                    tracing::warn!("Failed Association {} - it will retry after {}sec.", e, wait_secs);
+                    tokio::time::sleep( Duration::from_secs(wait_secs)).await;
+                }
+            }
+            Err(e) =>{
+                let wait_secs = std::cmp::min(3u64 * 2u64.pow(cnt_tries - 1), 30);
+                tracing::warn!("Failed Association {} - it will retry after {}sec.", e, wait_secs);
+                tokio::time::sleep( Duration::from_secs(wait_secs)).await;
+            }
+        }
+
+    };
 
     /*
     let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;

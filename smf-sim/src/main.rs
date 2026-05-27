@@ -331,10 +331,18 @@ async fn main() -> anyhow::Result<()>
 
     // println!("{:#?}", cli);
 
-    tracing_subscriber::fmt()
-        .with_env_filter(&cli.log_level)
-        .with_target(false)
-        .init();
+    if matches!(cli.command, Commands::Interactive) {
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::ERROR)
+            .with_writer(std::io::sink)
+            .init();
+    }
+    else {
+        tracing_subscriber::fmt()
+            .with_env_filter(&cli.log_level)
+            .with_target(false)
+            .init();
+    }
 
     let content = tokio::fs::read_to_string(&cli.config).await?; //Get directory path info for Toml file
     let config: config::SimConfig = toml::from_str(&content)?; //Read Toml file
@@ -418,6 +426,22 @@ async fn main() -> anyhow::Result<()>
         Commands::Interactive => {
             let transport = std::sync::Arc::new(transport);
             let sim_state = state::SimState::new(&config.session);
+
+            let seq_counter = Arc::new(Mutex::new(100u32));
+            let upf_ts = Arc::new(AtomicU64::new(0));
+            let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<keepalive::KeepaliveEvent>(10);
+            let smf_addr = config.network.smf_n4_addr;
+
+            {
+                let t = transport.clone();
+                let s = seq_counter.clone();
+                let ts = upf_ts.clone();
+
+                let interval = Duration::from_secs(config.timing.heartbeat_interval_sec);
+                tokio::spawn( async move {
+                    keepalive::run(t, interval, s, smf_addr, ts, event_tx).await;
+                });
+            }
             tui::runner::run(&config, transport, sim_state).await?;
         }
 

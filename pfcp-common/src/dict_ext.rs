@@ -24,22 +24,25 @@ impl ValidationResult {
 ///
 /// - missing이 비어있으면 통과
 /// - missing에 이름이 있으면 해당 IE가 누락된 것
-pub fn validate(msg_type: u8, body: &[u8]) -> ValidationResult {
-    let Some(spec) = lookup(msg_type) else {
+pub fn validate(msg_type: u8, body: &[u8]) -> ValidationResult
+{
+    let Some(dictionary) = lookup(msg_type) else {
         // 딕셔너리에 없는 메시지 타입 → 검증 불가, 통과로 처리
         return ValidationResult { missing: vec![] };
     };
 
-    let received: std::collections::HashSet<u16> =
+    let recv_ies: std::collections::HashSet<u16> =
         iter_ies(body).iter().map(|ie| ie.ie_type).collect();
 
-    let missing = spec.ies.iter()
+    let missing = dictionary.ies.iter()
         .filter(|s| s.presence == Presence::Mandatory)
-        .filter(|s| !received.contains(&s.ie_type))
+        .filter(|s| !recv_ies.contains(&s.ie_type))
         .map(|s| s.name)
         .collect();
 
-    ValidationResult { missing }
+    ValidationResult {
+        missing
+    }
 }
 
 
@@ -50,9 +53,9 @@ mod tests {
 
     #[test]
     fn lookup_heartbeat() {
-        let spec = lookup(PFCP_HEARTBEAT_REQ).unwrap();
-        assert_eq!(spec.name, "Heartbeat Request");
-        assert_eq!(spec.ies.len(), 1);
+        let dictionary = lookup(PFCP_HEARTBEAT_REQ).unwrap();
+        assert_eq!(dictionary.name, "Heartbeat Request");
+        assert_eq!(dictionary.ies.len(), 1);
     }
 
     #[test]

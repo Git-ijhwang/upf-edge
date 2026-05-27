@@ -13,6 +13,7 @@ use std::net::Ipv4Addr;
 
 mod pfcp_server;
 mod session_store;
+mod handle_msg;
 mod tui;
 
 #[derive(Debug, Parser)]
@@ -197,14 +198,14 @@ async fn main() -> anyhow::Result<()> {
             }
         });
 
-        println!("Waiting for Ctrl-C...");
+        // println!("Waiting for Ctrl-C...");
 
-        signal::ctrl_c().await?;
-        println!("Exiting...");
+        // signal::ctrl_c().await?;
+        // println!("Exiting...");
     }
 
     println!("PFCP Server started on {}:8805", n4_addr);
-    println!("Waiting for Ctrl-C...");
+    // println!("Waiting for Ctrl-C...");
 
     let ctrl_c = signal::ctrl_c();
     println!("Waiting for Ctrl-C...");

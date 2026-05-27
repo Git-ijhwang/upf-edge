@@ -140,15 +140,19 @@ pub struct FarParams {
     pub outer_header_creation: Option<OuterHeaderCreation>,
 }
 
-// ── 편의 함수: 자주 쓰는 응답 빌더 ─────────────────────
 
-pub fn build_heartbeat_response(seq_num: u32, recovery_ts: u32) -> Vec<u8> {
+/// HeartBeat Response
+pub fn build_heartbeat_response(seq_num: u32, recovery_ts: u32)
+    -> Vec<u8>
+{
     let hdr = PfcpHeader::new_node_msg(PFCP_HEARTBEAT_RSP, seq_num);
     let mut msg = MsgBuilder::new(hdr);
     msg.add_recovery_timestamp(recovery_ts);
     msg.finish()
 }
 
+
+/// Association Setup Response
 pub fn build_association_setup_response( seq_num: u32,
                                         our_addr: Ipv4Addr,
                                         recovery_ts: u32,)
@@ -163,6 +167,8 @@ pub fn build_association_setup_response( seq_num: u32,
     msg.finish()
 }
 
+
+/// Session Establishment Request
 pub fn build_session_establishment_request(seq: u32, smf_addr: std::net::Ipv4Addr,
                                             cp_seid: u64, ue_ip: std::net::Ipv4Addr,
                                             gnb_addr: std::net::Ipv4Addr, gnb_teid: u32)
@@ -230,12 +236,14 @@ pub fn build_session_establishment_request(seq: u32, smf_addr: std::net::Ipv4Add
 
 
 
+/// Session Establishment Response
 pub fn build_session_establishment_response( seq_num: u32,
                                             cp_seid: u64,
                                             our_seid: u64,
                                             our_addr: Ipv4Addr,
-    created_pdrs: &[(u16, u32, Ipv4Addr)],
-) -> Vec<u8> {
+                                            created_pdrs: &[(u16, u32, Ipv4Addr)],)
+    -> Vec<u8>
+{
     let hdr = PfcpHeader::new_session_msg(
         PFCP_SESSION_ESTABLISHMENT_RSP, cp_seid, seq_num);
     let mut msg = MsgBuilder::new(hdr);
@@ -251,21 +259,28 @@ pub fn build_session_establishment_response( seq_num: u32,
     msg.finish()
 }
 
-pub fn build_session_modification_response(seq_num: u32, seid: u64) -> Vec<u8> {
+/// Session Modification Response
+pub fn build_session_modification_response(seq_num: u32, seid: u64)
+    -> Vec<u8>
+{
     let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_MODIFICATION_RSP, seid, seq_num);
     let mut msg = MsgBuilder::new(hdr);
     msg.add_cause(CAUSE_REQUEST_ACCEPTED);
     msg.finish()
 }
 
-pub fn build_session_deletion_response(seq_num: u32, seid: u64) -> Vec<u8> {
+
+/// Session Deletion Response
+pub fn build_session_deletion_response(seq_num: u32, seid: u64)
+    -> Vec<u8>
+{
     let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_DELETION_RSP, seid, seq_num);
     let mut msg = MsgBuilder::new(hdr);
     msg.add_cause(CAUSE_REQUEST_ACCEPTED);
     msg.finish()
 }
 
-// ── 테스트 ─────────────────────────────────────────────
+// ── Test ─────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

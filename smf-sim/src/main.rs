@@ -8,7 +8,8 @@ pub mod tui;
 
 use std::net::Ipv4Addr;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{OnceLock, Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use clap::{Parser, Subcommand};
 use tokio::time::{Duration};
 use pfcp_common::builder::MsgBuilder;
@@ -17,6 +18,8 @@ use pfcp_common::ie;
 use pfcp_common::types::*;
 
 use crate::validator::validate_response;
+
+static RECOVERY_TS: OnceLock<u32> = OnceLock::new();
 
 #[derive(Parser, Debug)]
 #[command(name = "smf-sim")]
@@ -75,16 +78,27 @@ enum SingleMessage {
     },
 }
 
+fn recovery_ts() -> u32 {
+
+    *RECOVERY_TS.get_or_init(|| {
+        let unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+
+        unix.wrapping_add(2_208_988_800)
+    })
+}
 
 ///NTP Timestamp
-fn ntp_now() -> u32 {
-    let unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as u32;
+// fn ntp_now() -> u32 {
+//     let unix = std::time::SystemTime::now()
+//         .duration_since(std::time::UNIX_EPOCH)
+//         .unwrap()
+//         .as_secs() as u32;
 
-    unix.wrapping_add(2_208_988_800)
-}
+//     unix.wrapping_add(2_208_988_800)
+// }
 
 async fn send_heartbeat(transport: &transport::PfcpTransport) 
     -> anyhow::Result<()>
@@ -94,7 +108,7 @@ async fn send_heartbeat(transport: &transport::PfcpTransport)
     let mut msg = MsgBuilder::new(hdr);
 
     // PCRF IE: RECOVERY TIME STAMP
-    msg.add_recovery_timestamp(ntp_now());
+    msg.add_recovery_timestamp(recovery_ts());
     let req = msg.finish();
 
     tracing::info!("-> Heartbeat Request (seq={})", seq);
@@ -137,7 +151,7 @@ async fn  send_association_setup (transport: &transport::PfcpTransport,
     let hdr = PfcpHeader::new_node_msg(PFCP_ASSOCIATION_SETUP_REQ, seq);
     let mut msg = MsgBuilder::new(hdr);
     msg.add_node_id_v4(smf_addr);
-    msg.add_recovery_timestamp(ntp_now());
+    msg.add_recovery_timestamp(recovery_ts());
     let req = msg.finish();
 
     tracing::info!("-> Association Setup Request (seq={}, node={})", seq, smf_addr);
@@ -365,16 +379,35 @@ async fn main() -> anyhow::Result<()>
         Commands::Run { scenario, num_ues: _ } => {
             let transport = Arc::new(transport);
             let seq_counter = Arc::new(Mutex::new(100u32));
+
+            let upf_ts = Arc::new(AtomicU64::new(0));
+            let (event_tx, mut event_rx) = tokio::sync::mpsc::channel::<keepalive::KeepaliveEvent>(10);
+            let smf_addr = config.network.smf_n4_addr;
+
             {
                 let t = transport.clone();
                 let s = seq_counter.clone();
+                let ts = upf_ts.clone();
 
                 let interval = Duration::from_secs(config.timing.heartbeat_interval_sec);
 
                 tokio::spawn( async move {
-                    keepalive::run(t, interval, s).await;
+                    keepalive::run(t, interval, s, smf_addr, ts, event_tx).await;
                 });
             }
+
+
+            // 이벤트 핸들러 (UPF 재시작 로그)
+            tokio::spawn(async move {
+                while let Some(event) = event_rx.recv().await {
+                    match event {
+                        keepalive::KeepaliveEvent::UpfRestarted { new_ts } => {
+                            tracing::warn!("[Main] UPF 재시작: ts={}", new_ts);
+                        }
+                    }
+                }
+            });
+
             let mut sim_state = state::SimState::new(&config.session);
             match scenario {
                 1 => scenario::basic_lifecycle::run(&transport, &mut sim_state, &config).await?,

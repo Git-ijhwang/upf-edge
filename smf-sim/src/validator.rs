@@ -67,3 +67,12 @@ pub fn extract_session_info(rsp: &[u8]) -> anyhow::Result<(u64, u32, Ipv4Addr)>
 
     Ok((upf_seid, upf_teid, upf_n3_addr))
 }
+
+
+pub fn extract_recovery_ts(rsp: &[u8]) -> Option<u32> {
+    let (_hdr, body) = pfcp_common::header::PfcpHeader::decode(rsp).ok()?;
+    let ies = pfcp_common::ie::iter_ies(body);
+    ies.iter()
+        .find(|i| i.ie_type == pfcp_common::types::PFCP_IE_RECOVERY_TIME_STAMP)
+        .and_then(|i| pfcp_common::ie::parse_recovery_timestamp(i.value).ok())
+}

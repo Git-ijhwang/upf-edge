@@ -23,10 +23,17 @@ pub struct SimState {
     next_cp_seid:   u64,
     next_seq:       u32,
     pub sessions:   HashMap<u64, SimSession>,
+    pub upf_recovery_ts: Option<u32>,
+    my_recovery_ts: u32,
 }
 
 impl SimState {
     pub fn new(config: &SessionConfig) -> Self {
+        let unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap().as_secs() as u32;
+        let my_recovery_ts = unix.wrapping_add(2_208_988_800);
+
         Self {
             next_ue_ip:     u32::from(config.ue_ip_pool_start),
             ue_ip_end:      u32::from(config.ue_ip_pool_end),
@@ -34,6 +41,8 @@ impl SimState {
             next_cp_seid:   1,
             next_seq:       1,
             sessions:       HashMap::new(),
+            upf_recovery_ts: None,
+            my_recovery_ts,
         }
     }
 

@@ -189,7 +189,7 @@ async fn main() -> anyhow::Result<()> {
     }
     else {
         /// Not Tui
-        env_logger::init();
+        // env_logger::init();
 
         tokio::spawn(async move {
             if let Err(e) = pfcp_server::run(pfcp, pfcp_map).await {

@@ -13,13 +13,13 @@ use crate::state::{SimState, SimSession};
 use crate::transport::PfcpTransport;
 
 /// NTP 타임스탬프
-fn ntp_now() -> u32 {
-    let unix = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as u32;
-    unix.wrapping_add(2_208_988_800)
-}
+// fn ntp_now() -> u32 {
+//     let unix = std::time::SystemTime::now()
+//         .duration_since(std::time::UNIX_EPOCH)
+//         .unwrap()
+//         .as_secs() as u32;
+//     unix.wrapping_add(2_208_988_800)
+// }
 
 pub async fn run(
     transport: &PfcpTransport,
@@ -35,7 +35,7 @@ pub async fn run(
     let hdr = PfcpHeader::new_node_msg(PFCP_ASSOCIATION_SETUP_REQ, seq);
     let mut msg = MsgBuilder::new(hdr);
     msg.add_node_id_v4(config.network.smf_n4_addr);
-    msg.add_recovery_timestamp(ntp_now());
+    msg.add_recovery_timestamp(crate::recovery_ts());
     let req = msg.finish();
 
     tracing::info!("→ [1/5] Association Setup Request (seq={})", seq);

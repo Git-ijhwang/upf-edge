@@ -59,6 +59,7 @@ pub struct PfcpServer {
 
     session_store: Option<std::sync::Arc<crate::session_store::SessionStore>>,
 
+    smf_recovery_ts: Option<u32>,
 }
 
 
@@ -84,6 +85,7 @@ impl PfcpServer
             last_activity: std::time::Instant::now(),
             tx_tui: None,
             session_store: None,
+            smf_recovery_ts: None,
         }
     }
 
@@ -518,7 +520,30 @@ fn handle_message ( data: &[u8],
 
     match header.msg_type {
         PFCP_HEARTBEAT_REQ => {
-            let srv = server.lock().unwrap();
+            let ies = ie::iter_ies(body);
+            let recv_ts = ies.iter()
+                .find(|ie| ie.ie_type == PFCP_IE_RECOVERY_TIME_STAMP)
+                .and_then(|ie| ie::parse_recovery_timestamp(ie.value).ok());
+
+            let mut srv = server.lock().unwrap();
+            
+            match (srv.smf_recovery_ts, recv_ts) {
+                (Some(stored), Some(recv)) if stored != recv => {
+                    log::warn!("  Detect SMF Re-starting. TS {}->{}", stored, recv);
+                    log::warn!("  Session Reset {} sessions", srv.sessions.len());
+                    srv.sessions.clear();
+                    srv.associated = false;
+                    srv.smf_recovery_ts = Some(recv);
+                    srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(false));
+                    srv.tui_sessions_updated();
+                }
+                (None, Some(recv)) => {
+                    srv.smf_recovery_ts = Some(recv);
+                }
+
+                _ => {}
+            }
+
             log::info!("-> Heartbeat Response (seq={}) ", header.seq_num);
             srv.tui_send(crate::tui::app::AppEvent::HeartbeatUpdated);
             srv.tui_log(format!("<- HB Response (seq={})", header.seq_num));
@@ -529,14 +554,23 @@ fn handle_message ( data: &[u8],
         PFCP_ASSOCIATION_SETUP_REQ => {
             let ies = ie::iter_ies(body);
             let mut peer_addr = None;
+            let mut smf_ts = None;
+
             for raw_ie in &ies {
-                if raw_ie.ie_type == PFCP_IE_NODE_ID {
-                    peer_addr = Some(ie::parse_node_id(raw_ie.value)?);
+                match raw_ie.ie_type {
+                    PFCP_IE_NODE_ID => {
+                        peer_addr = Some(ie::parse_node_id(raw_ie.value)?);
+                    }
+                    PFCP_IE_RECOVERY_TIME_STAMP => {
+                        smf_ts = ie::parse_recovery_timestamp(raw_ie.value).ok();
+                    }
+                    _ => {}
                 }
             }
 
-            let mut srv = server.lock().unwrap();
+            let mut srv  = server.lock().unwrap();
             srv.associated = true; //Update the associated status
+            srv.smf_recovery_ts = smf_ts;
 
             srv.tui_log("✅ UPF Association Established");
             srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(true));

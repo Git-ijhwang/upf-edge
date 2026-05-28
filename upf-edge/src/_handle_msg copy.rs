@@ -14,111 +14,6 @@ use pfcp_common::types::*;
 
 use crate::pfcp_server::{SessionData, PfcpServer};
 
-fn decode_header<'a> (data: &'a[u8]) -> anyhow::Result<(PfcpHeader, &'a[u8])>
-{
-    let (header, body) = PfcpHeader::decode(data)?;
-    log::info!("  msg_type={}, seq={}, seid={:?}", header.msg_type, header.seq_num, header.seid);
-
-    let val = pfcp_common::dict_ext::validate(header.msg_type, body);
-
-    let msg_name = pfcp_common::dict_ext::lookup(header.msg_type)
-        .map(|s| s.name)
-        .unwrap_or("Unknow");
-
-    if !val.is_ok() {
-        log::warn!("  [Dict] Mandatory IE missing in {}: {:?}",
-            msg_name, val.missing);
-    } else {
-        log::info!("  [Dict] {} - IE validation passed",
-            msg_name);
-    }
-
-    Ok((header, body))
-}
-
-fn handle_heartbeat( header: &PfcpHeader,
-                    body: &[u8],
-                    server: &Arc<Mutex<PfcpServer>>,)
-    -> anyhow::Result<Vec<u8>>
-{
-    let ies = ie::iter_ies(body);
-    let recv_ts = ies.iter()
-        .find(|ie| ie.ie_type == PFCP_IE_RECOVERY_TIME_STAMP)
-        .and_then(|ie| ie::parse_recovery_timestamp(ie.value).ok());
-
-    let mut srv = server.lock().unwrap();
-    
-    match (srv.smf_recovery_ts, recv_ts) {
-        (Some(stored), Some(recv)) if stored != recv => {
-            log::warn!("  Detect SMF Re-starting. TS {}->{}", stored, recv);
-            log::warn!("  Session Reset {} sessions", srv.sessions.len());
-            srv.sessions.clear();
-            srv.associated = false;
-            srv.smf_recovery_ts = Some(recv);
-            srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(false));
-            srv.tui_sessions_updated();
-        }
-        (None, Some(recv)) => {
-            srv.smf_recovery_ts = Some(recv);
-        }
-
-        _ => {}
-    }
-
-    log::info!("-> Heartbeat Response (seq={}) ", header.seq_num);
-    srv.tui_send(crate::tui::app::AppEvent::HeartbeatUpdated);
-    srv.tui_log(format!("<- HB Response (seq={})", header.seq_num));
-
-    //Generate Heartbeat Response Message
-    Ok(builder::build_heartbeat_response(header.seq_num, srv.recovery_ts))
-}
-
-
-fn handle_session_association(header: &PfcpHeader,
-                                body: &[u8],
-                                server: &Arc<Mutex<PfcpServer>>,
-                                session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,)
-    -> anyhow::Result<Vec<u8>>
-{
-    let ies = ie::iter_ies(body);
-    let mut peer_addr = None;
-    let mut smf_ts = None;
-
-    for raw_ie in &ies {
-        match raw_ie.ie_type {
-            PFCP_IE_NODE_ID => {
-                peer_addr = Some(ie::parse_node_id(raw_ie.value)?);
-            }
-            PFCP_IE_RECOVERY_TIME_STAMP => {
-                smf_ts = ie::parse_recovery_timestamp(raw_ie.value).ok();
-            }
-            _ => {}
-        }
-    }
-    let mut srv  = server.lock().unwrap();
-    srv.associated = true; //Update the associated status
-    srv.smf_recovery_ts = smf_ts;
-
-    srv.tui_log("✅ UPF Association Established");
-    srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(true));
-
-    // Learn SMF address
-    if let Some(smf_ip) = peer_addr {
-        srv.peer_addr = Some(SocketAddr::new(smf_ip.into(), 8805));
-        log::info!("  SMF peer addr stored: {}:8805", smf_ip);
-    }
-
-    let peer = peer_addr.unwrap_or(Ipv4Addr::UNSPECIFIED);
-    log::info!("-> Association setup Response (peer={})", peer);
-
-    //Generate Association Setup Response Message
-    Ok(
-        builder::build_association_setup_response(
-            header.seq_num, srv.n4_addr, srv.recovery_ts
-        )
-    )
-
-}
 
 /// Session Establish 처리
 fn handle_session_establishment(header: &PfcpHeader,
@@ -229,14 +124,15 @@ fn handle_session_deletion( header: &PfcpHeader,
     let seid = header.seid.unwrap_or(0);
 
     // 1. Search UE IP with SEID
-    let (session_data, store) = {
+    let session_data = {
         let mut svr = server.lock().unwrap();
-        let data = svr.sessions.remove(&seid);
-
+        svr.sessions.remove(&seid)
+    };
+    {
+        let mut svr = server.lock().unwrap();
         svr.tui_sessions_updated();
         svr.tui_log(format!("🗑️ Session Deleted: SEID={:#x}", seid)); 
-        (data, svr.session_store.clone())
-    };
+    }
 
     match session_data {
         Some(data) => {
@@ -254,7 +150,7 @@ fn handle_session_deletion( header: &PfcpHeader,
         }
     }
 
-    if let Some(store) = store {
+    if let Some(store) = server.lock().unwrap().session_store.clone() {
         tokio::spawn(async move {
             if let Err(e) = store.delete(seid).await {
                 log::error!("Failed to delete session from Redis: {}", e);
@@ -272,15 +168,97 @@ pub fn handle_message ( data: &[u8],
                         session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>)
     -> anyhow::Result<Vec<u8>>
 {
-    let (header, body) = decode_header(data)?;
+    let (header, body) = PfcpHeader::decode(data)?;
+
+    log::info!("  msg_type={}, seq={}, seid={:?}", header.msg_type, header.seq_num, header.seid);
+
+    let val = pfcp_common::dict_ext::validate(header.msg_type, body);
+    if !val.is_ok() {
+        log::warn!("  [Dict] Mandatory IE missing in {}: {:?}",
+            pfcp_common::dict_ext::lookup(header.msg_type)
+                .map(|s| s.name)
+                .unwrap_or("Unknown"),
+            val.missing
+        );
+    }
+    else if pfcp_common::dict_ext::lookup(header.msg_type).is_some() {
+        log::info!("  [Dict] {} - IE validation passed",
+            pfcp_common::dict_ext::lookup(header.msg_type).unwrap().name);
+    }
 
     match header.msg_type {
         PFCP_HEARTBEAT_REQ => {
-            handle_heartbeat(&header, body, server)
+            let ies = ie::iter_ies(body);
+            let recv_ts = ies.iter()
+                .find(|ie| ie.ie_type == PFCP_IE_RECOVERY_TIME_STAMP)
+                .and_then(|ie| ie::parse_recovery_timestamp(ie.value).ok());
+
+            let mut srv = server.lock().unwrap();
+            
+            match (srv.smf_recovery_ts, recv_ts) {
+                (Some(stored), Some(recv)) if stored != recv => {
+                    log::warn!("  Detect SMF Re-starting. TS {}->{}", stored, recv);
+                    log::warn!("  Session Reset {} sessions", srv.sessions.len());
+                    srv.sessions.clear();
+                    srv.associated = false;
+                    srv.smf_recovery_ts = Some(recv);
+                    srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(false));
+                    srv.tui_sessions_updated();
+                }
+                (None, Some(recv)) => {
+                    srv.smf_recovery_ts = Some(recv);
+                }
+
+                _ => {}
+            }
+
+            log::info!("-> Heartbeat Response (seq={}) ", header.seq_num);
+            srv.tui_send(crate::tui::app::AppEvent::HeartbeatUpdated);
+            srv.tui_log(format!("<- HB Response (seq={})", header.seq_num));
+
+            //Generate Heartbeat Response Message
+            Ok(builder::build_heartbeat_response(header.seq_num, srv.recovery_ts))
         }
 
         PFCP_ASSOCIATION_SETUP_REQ => {
-            handle_session_association(&header, body, server, session_map)
+            let ies = ie::iter_ies(body);
+            let mut peer_addr = None;
+            let mut smf_ts = None;
+
+            for raw_ie in &ies {
+                match raw_ie.ie_type {
+                    PFCP_IE_NODE_ID => {
+                        peer_addr = Some(ie::parse_node_id(raw_ie.value)?);
+                    }
+                    PFCP_IE_RECOVERY_TIME_STAMP => {
+                        smf_ts = ie::parse_recovery_timestamp(raw_ie.value).ok();
+                    }
+                    _ => {}
+                }
+            }
+
+            let mut srv  = server.lock().unwrap();
+            srv.associated = true; //Update the associated status
+            srv.smf_recovery_ts = smf_ts;
+
+            srv.tui_log("✅ UPF Association Established");
+            srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(true));
+
+            // Learn SMF address
+            if let Some(smf_ip) = peer_addr {
+                srv.peer_addr = Some(SocketAddr::new(smf_ip.into(), 8805));
+                log::info!("  SMF peer addr stored: {}:8805", smf_ip);
+            }
+
+            let peer = peer_addr.unwrap_or(Ipv4Addr::UNSPECIFIED);
+            log::info!("-> Association setup Response (peer={})", peer);
+
+            //Generate Association Setup Response Message
+            Ok(
+                builder::build_association_setup_response(
+                    header.seq_num, srv.n4_addr, srv.recovery_ts
+                )
+            )
         }
 
         PFCP_SESSION_ESTABLISHMENT_REQ => {

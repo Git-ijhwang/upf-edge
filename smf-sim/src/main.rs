@@ -333,7 +333,7 @@ async fn main() -> anyhow::Result<()>
 
     if matches!(cli.command, Commands::Interactive) {
         tracing_subscriber::fmt()
-            .with_max_level(tracing::Level::ERROR)
+            .with_max_level(tracing::Level::INFO)
             .with_writer(std::io::sink)
             .init();
     }

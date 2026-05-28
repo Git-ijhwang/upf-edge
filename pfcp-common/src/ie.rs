@@ -12,11 +12,15 @@ pub struct RawIE<'a> {
     pub ie_type: u16,
     pub length: u16,
     pub value: &'a [u8],
+    pub sub_ie: Vec<RawIE<'a>>,
 }
 
 /// 버퍼에서 TLV IE들을 순회
-pub fn iter_ies(mut buf: &[u8]) -> Vec<RawIE<'_>> {
+pub fn iter_ies(mut buf: &[u8]) -> Vec<RawIE<'_>>
+{
+
     let mut ies = Vec::new();
+
     while buf.len() >= 4 {
         let ie_type = u16::from_be_bytes([buf[0], buf[1]]);
         let length = u16::from_be_bytes([buf[2], buf[3]]) as usize;
@@ -28,15 +32,26 @@ pub fn iter_ies(mut buf: &[u8]) -> Vec<RawIE<'_>> {
             );
             break;
         }
+        let value = &buf[4..4+length];
 
-        ies.push(RawIE {
+        let sub_ie = if crate::types::is_grouped_ie(ie_type) {
+            iter_ies(value)
+        }
+        else {
+            vec![]
+        };
+
+        ies.push( RawIE {
             ie_type,
             length: length as u16,
-            value: &buf[4..4 + length],
+            value,
+            sub_ie,
+
         });
 
         buf = &buf[4 + length..];
     }
+
     ies
 }
 

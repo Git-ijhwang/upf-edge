@@ -420,3 +420,20 @@ pub const	CAUSE_PFCP_SESSION_RESTORATION_FAILURE : u8 =	86;
 pub const	CAUSE_L2TP_TUNNEL_AUTH_FAILURE		: u8 =	87;
 pub const	CAUSE_L2TP_SESSION_AUTH_FAILURE		: u8 =	88;
 pub const	CAUSE_L2TP_TUNNEL_LNS_NOT_REACHABLE		: u8 =	89;
+
+
+
+pub fn is_grouped_ie(ie_type: u16) -> bool {
+    matches!(ie_type,
+        PFCP_IE_CREATE_PDR   |
+        PFCP_IE_CREATE_FAR   |
+        PFCP_IE_CREATED_PDR  |
+        PFCP_IE_UPDATE_PDR   |
+        PFCP_IE_UPDATE_FAR   |
+        PFCP_IE_REMOVE_PDR   |
+        PFCP_IE_REMOVE_FAR   |
+        PFCP_IE_CREATE_URR   |
+        PFCP_IE_CREATE_QER   |
+        PFCP_IE_CREATE_BAR
+    )
+}

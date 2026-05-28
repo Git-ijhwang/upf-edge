@@ -41,10 +41,8 @@ fn handle_heartbeat( header: &PfcpHeader,
                     server: &Arc<Mutex<PfcpServer>>,)
     -> anyhow::Result<Vec<u8>>
 {
-    let ies = ie::iter_ies(body);
-    let recv_ts = ies.iter()
-        .find(|ie| ie.ie_type == PFCP_IE_RECOVERY_TIME_STAMP)
-        .and_then(|ie| ie::parse_recovery_timestamp(ie.value).ok());
+    let req = pfcp_common::messages::HeartbeatReq::decode(body);
+    let recv_ts = req.recovery_ts;
 
     let mut srv = server.lock().unwrap();
     
@@ -80,21 +78,10 @@ fn handle_session_association(header: &PfcpHeader,
                                 session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,)
     -> anyhow::Result<Vec<u8>>
 {
-    let ies = ie::iter_ies(body);
-    let mut peer_addr = None;
-    let mut smf_ts = None;
+    let req = pfcp_common::messages::AssociationSetupReq::decode(body)?;
+    let peer_addr = Some(req.node_id);
+    let smf_ts = Some(req.recovery_ts);
 
-    for raw_ie in &ies {
-        match raw_ie.ie_type {
-            PFCP_IE_NODE_ID => {
-                peer_addr = Some(ie::parse_node_id(raw_ie.value)?);
-            }
-            PFCP_IE_RECOVERY_TIME_STAMP => {
-                smf_ts = ie::parse_recovery_timestamp(raw_ie.value).ok();
-            }
-            _ => {}
-        }
-    }
     let mut srv  = server.lock().unwrap();
     srv.associated = true; //Update the associated status
     srv.smf_recovery_ts = smf_ts;
@@ -127,36 +114,21 @@ fn handle_session_establishment(header: &PfcpHeader,
                                 session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,)
     -> anyhow::Result<Vec<u8>>
 {
-    let ies = ie::iter_ies(body);
-    let mut pdrs = Vec::new();
-    let mut fars = Vec::new();
-    let mut cp_seid = 0u64;
-
-    for ie in &ies {
-        match ie.ie_type {
-            PFCP_IE_FSEID => {
-                let (seid, _ ) = ie::parse_fseid(ie.value)?;
-                cp_seid = seid;
-            }
-            PFCP_IE_CREATE_PDR => {
-                pdrs.push(ie::parse_create_pdr(ie.value)?);
-            }
-            PFCP_IE_CREATE_FAR => {
-                fars.push(ie::parse_create_far(ie.value)?);
-            }
-            _ => {}
-        }
-    }
+    let req = pfcp_common::messages::SessionEstablishmentReq::decode(body)?;
+    let cp_seid = req.cp_seid;
+    let smf_addr = req.smf_addr;
+    let create_pdrs = req.create_pdrs;
+    let create_fars = req.create_fars;
 
     let mut srv = server.lock().unwrap();
     let local_seid = srv.alloc_seid();
     let teid = srv.alloc_teid();
 
-    let ue_ip = pdrs.iter()
+    let ue_ip = create_pdrs.iter()
         .find_map(|p| p.ue_ip)
         .ok_or_else(|| anyhow::anyhow!("no UE IP in PDRs"))?;
 
-    let gnb_info = fars.iter()
+    let gnb_info = create_fars.iter()
         .find_map(|f| f.outer_header_creation.as_ref())
         .ok_or_else(|| anyhow::anyhow!("no Outer Header Creation in FARs"))?;
 
@@ -204,7 +176,7 @@ fn handle_session_establishment(header: &PfcpHeader,
     log::info!("  eBPF map: UE={} → TEID={}, gNB={}", ue_ip, teid, gnb_info.peer_addr);
 
 
-    let created_pdrs: Vec<(u16, u32, Ipv4Addr)> = pdrs.iter()
+    let created_pdrs: Vec<(u16, u32, Ipv4Addr)> = create_pdrs.iter()
         .filter(|p| p.source_interface == INTERFACE_ACCESS)
         .map(|p| (p.pdr_id, teid, srv.n3_addr))
         .collect();

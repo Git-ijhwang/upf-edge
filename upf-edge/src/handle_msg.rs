@@ -137,9 +137,15 @@ fn handle_session_establishment(header: &PfcpHeader,
     };
 
     let info = SessionInfo {
+        //Phase 1 Fields
         teid: teid.to_be(),
         gnb_ip: u32::from(gnb_info.peer_addr).to_be(),
         upf_ip: u32::from(srv.n3_addr).to_be(),
+
+        //Phase 2 Fields
+        seid:      local_seid,
+        pdr_ids:   [0u32; upf_edge_common::MAX_PDR_PER_SESSION],
+        pdr_count: 0,  // 0이면 XDP가 Phase 1 경로 사용
     };
 
     {

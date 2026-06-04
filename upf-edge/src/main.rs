@@ -138,6 +138,14 @@ async fn main() -> anyhow::Result<()> {
     let session_map = Arc::new(Mutex::new(session_map));
     let pfcp_map: Arc<Mutex<HashMap<_, SessionKey, SessionInfo>>> = session_map.clone();
 
+    let pdr_map: HashMap<_, upf_edge_common::PdrKey, upf_edge_common::PdrValue> =
+        HashMap::try_from(ebpf.take_map("PDR_MAP").unwrap())?;
+    let pdr_map = Arc::new(Mutex::new(pdr_map));
+
+    let far_map: HashMap<_, upf_edge_common::FarKey, upf_edge_common::FarValue> =
+        HashMap::try_from(ebpf.take_map("FAR_MAP").unwrap())?;
+    let far_map = Arc::new(Mutex::new(far_map));
+
     let Opt { iface_n3, iface_n6, n4_addr, n3_addr, tui } = opt;
 
     // for N3 Interface
@@ -181,7 +189,7 @@ async fn main() -> anyhow::Result<()> {
 
         pfcp.lock().unwrap().set_tui_sender(tx_tui);
         tokio::spawn(async move {
-            if let Err(e) = pfcp_server::run(pfcp, pfcp_map).await {
+            if let Err(e) = pfcp_server::run(pfcp, pfcp_map, pdr_map.clone(), far_map.clone()).await {
                 log::error!("PFCP Server error: {}", e);
             }
         });
@@ -193,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
         // env_logger::init();
 
         tokio::spawn(async move {
-            if let Err(e) = pfcp_server::run(pfcp, pfcp_map).await {
+            if let Err(e) = pfcp_server::run(pfcp, pfcp_map, pdr_map.clone(), far_map.clone()).await {
                 log::error!("PFCP Server error: {}", e);
             }
         });

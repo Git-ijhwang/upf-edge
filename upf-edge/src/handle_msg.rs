@@ -4,7 +4,7 @@ use tokio::net::UdpSocket;
 use tokio::time::{Duration};
 
 use aya::maps::HashMap;
-use upf_edge_common::{SessionInfo, SessionKey};
+use upf_edge_common::{FarKey, FarValue, MAX_PDR_PER_SESSION, PdrKey, PdrValue, SessionInfo, SessionKey};
 
 use pfcp_common::header::PfcpHeader;
 use pfcp_common::builder;
@@ -111,7 +111,9 @@ fn handle_session_association(header: &PfcpHeader,
 fn handle_session_establishment(header: &PfcpHeader,
                                 body: &[u8],
                                 server: &Arc<Mutex<PfcpServer>>,
-                                session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,)
+                                session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
+                                pdr_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
+                                far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
     -> anyhow::Result<Vec<u8>>
 {
     let req = pfcp_common::messages::SessionEstablishmentReq::decode(body)?;
@@ -136,6 +138,13 @@ fn handle_session_establishment(header: &PfcpHeader,
         ue_ip: u32::from(ue_ip).to_be(),
     };
 
+    //Get PDR ID 
+    let mut pdr_ids = [0u32; upf_edge_common::MAX_PDR_PER_SESSION];
+    let pdr_count = create_pdrs.len().min(upf_edge_common::MAX_PDR_PER_SESSION);
+    for (i, pdr) in create_pdrs.iter().take(pdr_count).enumerate() {
+        pdr_ids[i] = pdr.pdr_id as u32;
+    }
+
     let info = SessionInfo {
         //Phase 1 Fields
         teid: teid.to_be(),
@@ -144,13 +153,66 @@ fn handle_session_establishment(header: &PfcpHeader,
 
         //Phase 2 Fields
         seid:      local_seid,
-        pdr_ids:   [0u32; upf_edge_common::MAX_PDR_PER_SESSION],
-        pdr_count: 0,  // 0이면 XDP가 Phase 1 경로 사용
+        pdr_ids,
+        pdr_count: pdr_count as u8,
     };
 
     {
         let mut map = session_map.lock().unwrap();
         map.insert(key, info, 0)?;
+    }
+
+    for pdr in &create_pdrs {
+        let pdr_key = PdrKey {
+            pdr_id: pdr.pdr_id as u32,
+        };
+        let pdr_value = PdrValue {
+            precedence:         pdr.precedence,
+            source_interface:   pdr.source_interface,
+            ue_ip:              u32::from(ue_ip).to_be(),
+            qfi:                0,
+            far_id:             pdr.far_id.unwrap_or(0),
+            qer_id:             0,
+            outer_header_removal:   pdr.outer_header_removal as u8,
+            sdf_proto:          0,
+            sdf_src_ip:         0,
+            sdf_dst_ip:         0,
+            sdf_src_port:       0,
+            sdf_dst_port:       0,
+        };
+
+        let mut map = pdr_map.lock().unwrap();
+        map.insert(pdr_key, pdr_value, 0)?;
+        log::debug!("  PDR[{}]: src_if={}, far_id={}",
+            pdr.pdr_id, pdr.source_interface, pdr.far_id.unwrap_or(0));
+    }
+
+    for far in &create_fars {
+        let far_key = FarKey {
+            far_id: far.far_id
+        };
+
+        let far_value = FarValue {
+            apply_action:       far.apply_action,
+            dst_interface:      far.dest_interface.unwrap_or(0),
+            gnb_ip:             far.outer_header_creation.as_ref()
+                                    .map(|o| u32::from(o.peer_addr).to_be())
+                                    .unwrap_or(0),
+            teid:               far.outer_header_creation.as_ref()
+                                    .map(|o| o.teid.to_be())
+                                    .unwrap_or(0),
+            upf_n3_ip:          u32::from(srv.n3_addr).to_be(),
+        };
+        let mut map = far_map.lock().unwrap();
+        map.insert(far_key, far_value, 0)?;
+        log::debug!("  FAR[{}]: action={}, dst_if={}, gnb={}",
+            far.far_id,
+            far.apply_action,
+            far_value.dst_interface,
+            far.outer_header_creation.as_ref()
+                .map(|o| o.peer_addr)
+                .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED)
+        );
     }
 
     srv.sessions.insert(local_seid, SessionData {
@@ -199,9 +261,11 @@ fn handle_session_establishment(header: &PfcpHeader,
 
 /// Session Deletion 처리 — eBPF 맵에서 세션 제거
 fn handle_session_deletion( header: &PfcpHeader,
-                            _body: &[u8],
+                            body: &[u8],
                             server: &Arc<Mutex<PfcpServer>>,
-                            session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,)
+                            session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
+                            pdr_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
+                            far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
     -> anyhow::Result<Vec<u8>>
 {
     let seid = header.seid.unwrap_or(0);
@@ -247,7 +311,9 @@ fn handle_session_deletion( header: &PfcpHeader,
 
 pub fn handle_message ( data: &[u8],
                         server: &Arc<Mutex<PfcpServer>>,
-                        session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>)
+                        session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
+                        pdr_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
+                        far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
     -> anyhow::Result<Vec<u8>>
 {
     let (header, body) = decode_header(data)?;
@@ -262,11 +328,11 @@ pub fn handle_message ( data: &[u8],
         }
 
         PFCP_SESSION_ESTABLISHMENT_REQ => {
-            handle_session_establishment(&header, body, server, session_map)
+            handle_session_establishment(&header, body, server, session_map, pdr_map, far_map)
         }
 
         PFCP_SESSION_DELETION_REQ => {
-            handle_session_deletion(&header, body, server, session_map)
+            handle_session_deletion(&header, body, server, session_map, pdr_map, far_map)
         }
 
         other => {

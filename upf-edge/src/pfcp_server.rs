@@ -182,7 +182,9 @@ fn touch_activity(server: &Arc<Mutex<PfcpServer>>) {
 
 ///PFCP Server
 pub async fn run ( server: Arc<Mutex<PfcpServer>>,
-                   session_map: Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>)
+                   session_map: Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
+                   pdr_map: Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
+                   far_map: Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
     -> anyhow::Result<()>
 {
     let n4_addr = {
@@ -253,7 +255,7 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
                 // last_activity update
                 touch_activity(&server);
 
-                match handle_message(data, &server, &session_map) {
+                match handle_message(data, &server, &session_map, &pdr_map, &far_map) {
                     Ok(response) => {
                         if response.is_empty() {
                             // log::info!("No response sent for this message");

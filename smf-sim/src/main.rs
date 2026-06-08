@@ -356,7 +356,7 @@ async fn main() -> anyhow::Result<()>
         //Bind address:  Combinded with My IP address and Port number
         std::net::SocketAddr::new(
                 config.network.smf_n4_addr.into(),
-                8805), //Port Number
+                config.network.smf_n4_port), //Port Number
 
         std::net::SocketAddr::new(
             config.network.upf_n4_addr.into(),

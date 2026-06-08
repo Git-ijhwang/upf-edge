@@ -11,6 +11,7 @@ pub struct SimConfig {
 #[derive(Debug, Deserialize)]
 pub struct NetworkConfig {
     pub smf_n4_addr: Ipv4Addr,
+    pub smf_n4_port: u16,
     pub upf_n4_addr: Ipv4Addr,
     #[serde(default = "default_pfcp_port")]
     pub upf_n4_port: u16,
@@ -26,7 +27,7 @@ pub struct SessionConfig {
     #[serde(default = "default_gnb_teid_start")]
     pub gnb_teid_start: u32,
     #[serde(default = "default_max_sessions")]
-    pub max_session: u32,
+    pub max_sessions: u32,
 }
 
 #[derive(Debug, Deserialize)]

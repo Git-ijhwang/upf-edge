@@ -101,7 +101,7 @@ fn handle_session_association(header: &PfcpHeader,
     //Generate Association Setup Response Message
     Ok(
         builder::build_association_setup_response(
-            header.seq_num, srv.n4_addr, srv.recovery_ts
+            header.seq_num, srv.n3_addr, srv.recovery_ts
         )
     )
 
@@ -253,7 +253,7 @@ fn handle_session_establishment(header: &PfcpHeader,
 
     Ok(
         builder::build_session_establishment_response(
-            header.seq_num, cp_seid, local_seid, srv.n4_addr, &created_pdrs
+            header.seq_num, cp_seid, local_seid, srv.n3_addr, &created_pdrs
         )
     )
 }

@@ -9,7 +9,10 @@ use aya_ebpf::{
     },
     maps::HashMap,
     programs::XdpContext,
-    helpers::bpf_xdp_adjust_head,
+    helpers::{
+        bpf_xdp_adjust_head,
+        bpf_redirect,
+    }
 };
 use aya_log_ebpf::info;
 use upf_edge_common::{
@@ -589,12 +592,16 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
     }
 
     // 5. Optional Field Calc
-    let opt_len = if gtpu.flags & (GTPU_FLAG_S | GTPU_FLAG_E | GTPU_FLAG_PN) != 0 {
-        GTPU_OPT_LEN
+    let opt_len = if gtpu.flags & ( GTPU_FLAG_E ) != 0 {
+        8
+    } else if gtpu.flags & (GTPU_FLAG_S | GTPU_FLAG_PN) != 0 {
+        4
     }
     else {
         0
     };
+    // let opt_len = GTPU_OPT_LEN;
+    info!(ctx, "gtpu.flags=0x{:x}, opt_len={}", gtpu.flags, opt_len);
 
     let dst_mac = unsafe {
         match GW_MAC.get(0) {
@@ -635,15 +642,25 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
         return Ok(xdp_action::XDP_PASS);
     }
 
+    let br_mac : [u8; 6] = [0x92, 0xb7, 0x9a, 0x83, 0xc1, 0x19];
     unsafe {
         // core::ptr::write_unaligned((new_start) as *mut [u8; 6], eth_src);
-        core::ptr::write_unaligned((new_start) as *mut [u8; 6], dst_mac);
+        core::ptr::write_unaligned((new_start) as *mut [u8; 6], br_mac);
         core::ptr::write_unaligned((new_start + 6) as *mut [u8; 6], eth_dst);
         core::ptr::write_unaligned((new_start + 12) as *mut u16, 0x0008u16);
     }
 
     info!(ctx, "Decapsulated.");
-    return Ok(xdp_action::XDP_PASS);
+    let n6_ifindex = unsafe {
+        match IF_INDEX.get(1) {
+            Some(&idx) => idx,
+            None => return Ok(xdp_action::XDP_PASS),
+        }
+    };
+
+    Ok( unsafe{
+        bpf_redirect(n6_ifindex, 0) as u32
+    })
 
 }
 

@@ -128,9 +128,15 @@ async fn main() -> anyhow::Result<()> {
 
         let mut if_index: Array<_, u32> = Array::try_from(ebpf.map_mut("IF_INDEX").unwrap())?;
 
+        let n6_ifindex:u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", opt.iface_n6))
+            .context("failed to read N6 ifindex")?
+            .trim()
+            .parse()
+            .context("failed to parse N6 ifindex")?;
+
         if_index.set(0, 2, 0)?;
-        if_index.set(1, 3, 0)?;
-        println!("IF_INDEX set: eth0=2, br=4");
+        if_index.set(1, n6_ifindex, 0)?;
+        println!("IF_INDEX set: eth0=2, N6=({})={}", opt.iface_n6, n6_ifindex);
     }
 
     let session_map: HashMap<_, SessionKey, SessionInfo> =

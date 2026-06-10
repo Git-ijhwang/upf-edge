@@ -1,5 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddr };
 use std::sync::{Arc, Mutex};
+use std::process::Command;
 use tokio::net::UdpSocket;
 use tokio::time::{Duration};
 
@@ -13,6 +14,43 @@ use pfcp_common::ie;
 use pfcp_common::types::*;
 
 use crate::pfcp_server::{SessionData, PfcpServer};
+
+// Route add for UE and neighbor entry adding
+fn setup_ue_route(ue_ip: std::net::Ipv4Addr)
+    -> anyhow::Result<()>
+{
+    let mac = std::fs::read_to_string("/sys/class/net/upfedge1/address")?
+        .trim().to_string();
+    let ue_ip_str = ue_ip.to_string();
+
+    let cidr = format!("{}/32", ue_ip_str);
+
+    let r1 = Command::new("ip")
+        .args(["route", "replace", &cidr, "dev", "upfedge1"])
+        .status()?;
+    let r2 = Command::new("ip")
+        .args(["neigh", "replace", &ue_ip_str, "lladdr", &mac, "dev", "upfedge1"])
+        .status()?;
+
+    if r1.success() && r2.success() {
+        log::info!("  UE route/neigh installed: {} -> upfedge1", ue_ip_str);
+        Ok(())
+    }
+    else {
+        anyhow::bail!("ip command failed (route={}, neigh={})", r1, r2);
+    }
+}
+
+// UE Route and Neighbor entry deletion
+fn teardown_ue_route(ue_ip: std::net::Ipv4Addr)
+{
+    let cidr = format!("{}/32", ue_ip);
+    let ue_ip_s = ue_ip.to_string();
+
+    let _ = Command::new("ip").args(["route", "del", &cidr]).status();
+    let _ = Command::new("ip").args(["neigh", "del", &ue_ip_s, "dev", "upfedge1"]).status();
+    log::info!("  UE route/neigh removed: {}", ue_ip);
+}
 
 fn decode_header<'a> (data: &'a[u8]) -> anyhow::Result<(PfcpHeader, &'a[u8])>
 {
@@ -203,8 +241,11 @@ fn handle_session_establishment(header: &PfcpHeader,
                                     .unwrap_or(0),
             upf_n3_ip:          u32::from(srv.n3_addr).to_be(),
         };
+
         let mut map = far_map.lock().unwrap();
+
         map.insert(far_key, far_value, 0)?;
+
         log::debug!("  FAR[{}]: action={}, dst_if={}, gnb={}",
             far.far_id,
             far.apply_action,
@@ -242,6 +283,10 @@ fn handle_session_establishment(header: &PfcpHeader,
 
     log::info!("  Session created: seid={}, UE={}, TEID={:#x}", local_seid, ue_ip, teid);
     log::info!("  eBPF map: UE={} → TEID={}, gNB={}", ue_ip, teid, gnb_info.peer_addr);
+
+    if let Err(e) = setup_ue_route(ue_ip) {
+        log::warn!("  Failed to setup UE route: {}", e);
+    }
 
 
     let created_pdrs: Vec<(u16, u32, Ipv4Addr)> = create_pdrs.iter()
@@ -376,6 +421,8 @@ fn handle_session_deletion( header: &PfcpHeader,
                 map.remove(&key);
             }
             log::info!("  eBPF map: removed UE={}", data.ue_ip);
+
+            teardown_ue_route(data.ue_ip);
         }
         None => {
             log::warn!("  Session not found for SEID={}", seid);

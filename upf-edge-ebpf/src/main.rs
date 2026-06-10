@@ -113,7 +113,7 @@ fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
 
     // Step 2. Check the IP Header
     let ip_proto = unsafe {
-        match ptr_at::<u8>(ctx, ETH_HDR_LEN+9) {
+        match ptr_at::<u8>(ctx, ETH_HDR_LEN + 9) {
             Some(p) => *p,
             None => return Ok(xdp_action::XDP_PASS),
         }

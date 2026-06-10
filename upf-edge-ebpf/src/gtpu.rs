@@ -23,6 +23,8 @@ pub const UDP_HDR_LEN: usize = 8;
 pub const GTPU_HDR_LEN: usize = 8;
 pub const GTPU_OPT_LEN: usize = 4;
 
+pub const GTPU_EXT_HDR_LEN: usize = 8;
+
 pub const OUTER_HDR_LEN: usize = ETH_HDR_LEN + IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN + GTPU_OPT_LEN;
 
 //Eth Header

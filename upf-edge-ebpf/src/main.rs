@@ -120,7 +120,7 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
 
     // 3. UDP Destination Port Check (2152 = GTP-U)
     let udp_dst = unsafe {
-        match ptr_at::<u16>(ctx, ETH_HDR_LEN + IP_HDR_LEN + 2) {
+        match ptr_at::<u16>(ctx, ETH_HDR_LEN + IP_HDR_LEN + 2) { //2 means destination port offset in UDP Header.
             Some(p) => u16::from_be(*p),
             None => {
                 info!(ctx, "Udp Proto");
@@ -128,7 +128,7 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
             }
         }
     };
-    if udp_dst != 2152 {
+    if udp_dst != GTP_UDP_PORT {
         return Ok(xdp_action::XDP_PASS);
     }
 
@@ -167,26 +167,19 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
 
     // 5. Optional Field Calc
     let opt_len = if gtpu.flags & ( GTPU_FLAG_E ) != 0 {
-        8
+        GTPU_EXT_HDR_LEN
     } else if gtpu.flags & (GTPU_FLAG_S | GTPU_FLAG_PN) != 0 {
-        4
+        GTPU_OPT_LEN
     }
     else {
         0
     };
-    // let opt_len = GTPU_OPT_LEN;
     info!(ctx, "gtpu.flags=0x{:x}, opt_len={}", gtpu.flags, opt_len);
 
 
     // 6. external ETH mac address save
     let eth_dst = unsafe {
         match ptr_at::<[u8; 6]>(ctx, 0) {
-            Some(p) => core::ptr::read_unaligned(p),
-            None => return Ok(xdp_action::XDP_PASS),
-        }
-    };
-    let eth_src = unsafe {
-        match ptr_at::<[u8; 6]>(ctx, 6) {
             Some(p) => core::ptr::read_unaligned(p),
             None => return Ok(xdp_action::XDP_PASS),
         }
@@ -203,7 +196,7 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
         return Ok(xdp_action::XDP_PASS);
     }
 
-    // Pointer re-verify
+    // 8. Pointer re-verify
     let new_start = ctx.data();
     let new_end = ctx.data_end();
     if new_start + ETH_HDR_LEN > new_end {
@@ -267,14 +260,7 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
         }
     };
 
-    // 4. Get Eth src and dst address from eth header
-    let eth_src = unsafe {
-        match ptr_at::<[u8; 6]>(ctx, 6) {
-            Some(p) => core::ptr::read_unaligned(p),
-            None => return Ok(xdp_action::XDP_PASS),
-        }
-    };
-
+    // 4. Get Eth Dst Address from ethernet header
     let eth_dst = unsafe {
         match ptr_at::<[u8; 6]>(ctx, 0) {
             Some(p) => core::ptr::read_unaligned(p),
@@ -294,8 +280,7 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
     // Eth(14) + IP(20) + UDP(8) + GTP(8) = 50
     // [                      ][Originial IP packet]
     // ^ <----------------------^
-    // let add_len = (ETH_HDR_LEN + IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN) as i32;
-    let add_len = (IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN + 8) as i32;
+    let add_len = (IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN + GTPU_EXT_HDR_LEN) as i32;
     if unsafe { bpf_xdp_adjust_head(ctx.ctx, -add_len)} != 0 {
         return Ok(xdp_action::XDP_PASS);
     }
@@ -303,7 +288,6 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
     // 7. Re-verify Pointer
     let data = ctx.data();
     let data_end = ctx.data_end();
-    // let total_hdr = add_len as usize;
     let total_hdr = (ETH_HDR_LEN as i32 + add_len) as usize;
     if data + total_hdr > data_end {
         return Ok(xdp_action::XDP_PASS);
@@ -317,13 +301,13 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
         }
     };
 
+    // 8. Make Ethernet Header
     let eth = EthHdr {
         dst: gnb_mac,
         src: eth_dst,
         eth_type: 0x0008u16,
     };
 
-    // 8. Make Ethernet Header
     // [                     ][GTP][Originial IP packet]
     //  ^
     //  |
@@ -336,10 +320,9 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
 
     // 9. Outer IP Header
     // [Ethernet][          ][GTP][Originial IP packet]
-    //  ^         |
-    //  ----------+
+    //  ^-------->|
     //            data
-    let outer_ip_len = (IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN + 8) as u16 + inner_ip_tot_len;
+    let outer_ip_len = (IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN + GTPU_EXT_HDR_LEN) as u16 + inner_ip_tot_len;
     let ip = IpHdr {
         version_ihl: 0x45,
         tos: 0,
@@ -362,15 +345,16 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
             ip,
         );
     }
+
     // 10. UDP Header
     // [Ethernet][IP][UDP][GTP]
     //            ^-->^
     //                |
     //                data
-    let udp_len = (UDP_HDR_LEN + GTPU_HDR_LEN + 8) as u16 + inner_ip_tot_len;
+    let udp_len = (UDP_HDR_LEN + GTPU_HDR_LEN + GTPU_EXT_HDR_LEN) as u16 + inner_ip_tot_len;
     let udp = UdpHdr {
-        source: 2152u16.to_be(),
-        dest: 2152u16.to_be(),
+        source: GTP_UDP_PORT.to_be(),
+        dest: GTP_UDP_PORT.to_be(),
         len: udp_len.to_be(),
         check: 0, //<- UDP checksum 
     };
@@ -383,7 +367,7 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
     // 11. GTP-U Header
     // [Ethernet][IP][UDP][GTP]
     //                    ^
-    let gtp_len  = inner_ip_tot_len + 8;
+    let gtp_len  = inner_ip_tot_len + GTPU_EXT_HDR_LEN as u16;
     let gtpu = GtpuHdr {
         flags: 0x34, //version 1, PT=1, E=0, S=0, PN=0
         msg_type: GTPU_GPDU,
@@ -397,7 +381,7 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
     }
 
      // PDU Session Container Extension Header (Downlink, QFI=1)
-    let ext_bytes: [u8; 8] = [
+    let ext_bytes: [u8; GTPU_EXT_HDR_LEN] = [
         0x00, 0x00,  // sequence number
         0x00,        // N-PDU number
         0x85,        // next ext type = PDU Session Container

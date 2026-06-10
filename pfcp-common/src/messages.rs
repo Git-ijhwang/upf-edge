@@ -96,3 +96,36 @@ impl HeartbeatReq {
         Self { recovery_ts }
     }
 }
+
+pub struct SessionModificationReq {
+    pub cp_seid: Option<u64>,
+    pub smf_addr: Option<Ipv4Addr>,
+    pub update_fars: Vec<crate::ie::ParsedFAR>,
+}
+
+impl SessionModificationReq {
+    pub fn decode(body: &[u8]) -> anyhow::Result<Self> {
+        // Implementation for decoding Session Modification Request
+        let ies = iter_ies(body);
+
+        //F-SEID에서 SEID와 SMF 주소 추출
+        let (cp_seid, smf_addr) = ies.iter()
+            .find(|ie| ie.ie_type == PFCP_IE_FSEID)
+            .and_then(|raw| ie::parse_fseid(raw.value).ok())
+            .map(|(seid, addr)| (Some(seid), Some(addr)))
+            .unwrap_or((None, None));
+
+        let update_fars = ies.iter()
+            .filter(|ie| ie.ie_type == PFCP_IE_UPDATE_FAR)
+            .map(|raw| ie::parse_update_far(raw.value)
+                .map_err(|e| anyhow::anyhow!("{}", e)))
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+
+        Ok(Self {
+            cp_seid,
+            smf_addr,
+            update_fars,
+        })
+    }
+}

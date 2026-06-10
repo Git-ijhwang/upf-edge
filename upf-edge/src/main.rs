@@ -101,12 +101,41 @@ async fn main() -> anyhow::Result<()> {
     {
         use aya::maps::Array;
         use upf_edge_common::MacAddr;
-        let mut gw_mac: Array<_, MacAddr> = Array::try_from(ebpf.map_mut("GW_MAC").unwrap())?;
-        gw_mac.set(0, MacAddr {
-            // addr: [ 0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xdd ],
-            addr: [0x52, 0x55, 0x55, 0x2e, 0xff, 0xc6],  // eth0 자신의 MAC
 
-        }, 0)?;
+        fn read_iface_mac(iface: &str) -> anyhow::Result<[u8; 6]> {
+            let s = std::fs::read_to_string(format!("/sys/class/net/{}/address", iface))?;
+            let parts: Vec<u8> = s.trim().split(':')
+                .map(|p| u8::from_str_radix(p, 16))
+                .collect::<Result<Vec<_>, _>>()?;
+            if parts.len() != 6 { anyhow::bail!("invalid MAC");}
+            Ok([ parts[0], parts[1], parts[2], parts[3], parts[4], parts[5] ])
+        }
+
+        fn read_gnb_mac() -> anyhow::Result<[u8; 6]> {
+            let out = std::process::Command::new("docker")
+                .args(["exec", "nr_gnb", "cat", "/sys/class/net/eth0/address"])
+                .output()?;
+            let s = std::str::from_utf8(&out.stdout)?;
+            let parts: Vec<u8> = s.trim().split(':')
+                .map(|p| u8::from_str_radix(p, 16))
+                .collect::<Result<Vec<_>, _>>()?;
+            if parts.len() != 6 { anyhow::bail!("invalid gNB MAC"); }
+            Ok([parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]])
+        }
+
+        let upfedge0_mac = read_iface_mac("upfedge0").context("read upfedge0 MAC")?;
+        let gnb_mac_addr = read_gnb_mac().context("read gNB MAC")?;
+
+        let mut gw_mac: Array<_, MacAddr> = Array::try_from(ebpf.map_mut("GW_MAC").unwrap())?;
+        gw_mac.set(0, MacAddr { addr: upfedge0_mac }, 0)?;
+        gw_mac.set(1, MacAddr { addr: gnb_mac_addr }, 0)?;
+
+        println!("GW_MAC[0] upfedge0={:02x?}", upfedge0_mac);
+        println!("GW_MAC[1] gNB={:02x?}", gnb_mac_addr);
+        //     // addr: [ 0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xdd ],
+        //     addr: [0x52, 0x55, 0x55, 0x2e, 0xff, 0xc6],  // eth0 자신의 MAC
+
+        // }, 0)?;
 
         /*
         let mut session_map: HashMap<_, SessionKey, SessionInfo> = 
@@ -128,15 +157,29 @@ async fn main() -> anyhow::Result<()> {
 
         let mut if_index: Array<_, u32> = Array::try_from(ebpf.map_mut("IF_INDEX").unwrap())?;
 
-        let n6_ifindex:u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", opt.iface_n6))
-            .context("failed to read N6 ifindex")?
+        // let n6_ifindex:u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", opt.iface_n6))
+        //     .context("failed to read N6 ifindex")?
+        //     .trim()
+        //     .parse()
+        //     .context("failed to parse N6 ifindex")?;
+        let n6_redirect_ifindex: u32 = std::fs::read_to_string("/sys/class/net/upfedge1/ifindex")
+            .context("failed to read upfedge1 ifindex")?
             .trim()
             .parse()
-            .context("failed to parse N6 ifindex")?;
+            .context("failed to parse upfedge1 ifindex")?;
 
-        if_index.set(0, 2, 0)?;
-        if_index.set(1, n6_ifindex, 0)?;
-        println!("IF_INDEX set: eth0=2, N6=({})={}", opt.iface_n6, n6_ifindex);
+        let n3_redirect_ifindex: u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", opt.iface_n3))
+            .context("failed to read N3 ifindex")?
+            .trim()
+            .parse()
+            .context("failed to parse N3 ifindex")?;
+
+        if_index.set(0, n3_redirect_ifindex, 0)?;
+        if_index.set(1, n6_redirect_ifindex, 0)?;
+
+        // println!("IF_INDEX set: eth0=2, N6=({})", n6_redirect_ifindex);
+        println!("IF_INDEX set: N3({})={}, N6(upfedge1)={}", opt.iface_n3, n3_redirect_ifindex, n6_redirect_ifindex);
+
     }
 
     let session_map: HashMap<_, SessionKey, SessionInfo> =

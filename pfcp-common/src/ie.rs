@@ -266,7 +266,8 @@ fn parse_pdi(value: &[u8], pdr: &mut ParsedPDR) -> Result<(), PfcpError> {
 }
 
 /// Create FAR (type=3) 파싱
-pub fn parse_create_far(value: &[u8]) -> Result<ParsedFAR, PfcpError> {
+pub fn parse_create_far(value: &[u8]) -> Result<ParsedFAR, PfcpError>
+{
     let ies = iter_ies(value);
     let mut far = ParsedFAR {
         far_id: 0, apply_action: 0, dest_interface: None,
@@ -286,6 +287,36 @@ pub fn parse_create_far(value: &[u8]) -> Result<ParsedFAR, PfcpError> {
                 far.apply_action = parse_apply_action(ie.value)?;
             }
             PFCP_IE_FORWARDING_PARAMETERS => {
+                parse_forwarding_params(ie.value, &mut far)?;
+            }
+            _ => {}
+        }
+    }
+    Ok(far)
+}
+
+/// Update FAR (type=3) 파싱
+pub fn parse_update_far(value: &[u8]) -> Result<ParsedFAR, PfcpError>
+{
+    let ies = iter_ies(value);
+    let mut far = ParsedFAR {
+        far_id: 0, apply_action: 0, dest_interface: None,
+        outer_header_creation: None,
+    };
+
+    for ie in &ies {
+        match ie.ie_type {
+            PFCP_IE_FAR_ID => {
+                if ie.value.len() >= 4 {
+                    far.far_id = u32::from_be_bytes([
+                        ie.value[0], ie.value[1], ie.value[2], ie.value[3],
+                    ]);
+                }
+            }
+            PFCP_IE_APPLY_ACTION => {
+                far.apply_action = parse_apply_action(ie.value)?;
+            }
+            PFCP_IE_UPDATE_FORWARDING_PARAMETERS => {
                 parse_forwarding_params(ie.value, &mut far)?;
             }
             _ => {}

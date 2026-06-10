@@ -114,7 +114,7 @@ pub static PFCP_DICT: phf::Map<u8, MessageSpec> = phf_map! {
         msg_type: PFCP_SESSION_MODIFICATION_REQ,
         name:     "Session Modification Request",
         ies: &[
-            IeSpec { ie_type: PFCP_IE_FSEID,      presence: Presence::Mandatory,   name: "F-SEID" },
+            IeSpec { ie_type: PFCP_IE_FSEID,      presence: Presence::Conditional,   name: "F-SEID" },
             IeSpec { ie_type: PFCP_IE_UPDATE_PDR,  presence: Presence::Conditional, name: "Update PDR" },
             IeSpec { ie_type: PFCP_IE_UPDATE_FAR,  presence: Presence::Conditional, name: "Update FAR" },
             IeSpec { ie_type: PFCP_IE_REMOVE_PDR,  presence: Presence::Optional,    name: "Remove PDR" },

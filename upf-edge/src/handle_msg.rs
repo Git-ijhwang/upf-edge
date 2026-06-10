@@ -259,6 +259,92 @@ fn handle_session_establishment(header: &PfcpHeader,
 }
 
 
+/// Session Modification 처리
+fn handle_session_modification(header: &PfcpHeader,
+                                body: &[u8],
+                                server: &Arc<Mutex<PfcpServer>>,
+                                session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
+                                far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
+    -> anyhow::Result<Vec<u8>>
+{
+    let req = pfcp_common::messages::SessionModificationReq::decode(body)?;
+    // let cp_seid = req.cp_seid;
+    // let smf_addr = req.smf_addr;
+    let update_fars = req.update_fars;
+
+    let local_seid = header.seid
+        .ok_or_else(|| anyhow::anyhow!("Session Modification Request missing SEID"))?;
+
+    let mut srv = server.lock().unwrap();
+
+    let session_data = srv.sessions.get(&local_seid)
+        .ok_or_else (|| anyhow::anyhow!("Unknown SEID in Modification: {}", local_seid))?
+        .clone();
+
+    let ue_ip = session_data.ue_ip;
+    let cp_seid = session_data.cp_seid;
+    let n3_addr = srv.n3_addr;
+
+    let new_ohc = update_fars.iter()
+        .find_map(|far| far.outer_header_creation.as_ref());
+
+    if let Some(ohc) = new_ohc {
+        let new_gnb_ip = ohc.peer_addr;
+        let new_teid = ohc.teid;
+
+        log::info!("  Session Modification: SEID={}, new_gNB={}, new TEID={:#x}",
+            local_seid, new_gnb_ip, new_teid);
+
+        // Update eBPF map
+        let key = SessionKey {
+            ue_ip: u32::from(ue_ip).to_be(),
+        };
+
+        {
+            let mut map = session_map.lock().unwrap();
+            if let Ok(mut info) = map.get(&key, 0) {
+                info.gnb_ip = u32::from(new_gnb_ip).to_be();
+                info.teid = new_teid.to_be();
+                map.insert(key, info, 0)?;
+                log::info!("  eBPF SESSION_MAP updated: UE={} → TEID={:#x}, gNB={}",
+                    ue_ip, new_teid, new_gnb_ip);
+            } else {
+                log::warn!("  Session not found in eBPF map for UE={}", ue_ip);
+            }
+        }
+
+        for far in &update_fars {
+            if far.outer_header_creation.is_none() {
+                continue;
+            }
+
+            let far_key = FarKey { far_id: far.far_id };
+            let mut map = far_map.lock().unwrap();
+            if let Ok(mut fv) = map.get(&far_key, 0) {
+                fv.gnb_ip = u32::from(new_gnb_ip).to_be();
+                fv.teid = new_teid.to_be();
+                map.insert(far_key, fv, 0)?;
+                log::debug!("  eBPF FAR_MAP updated: FAR {} → gNB={}, TEID={:#x}",
+                    far.far_id, new_gnb_ip, new_teid);
+            }
+            // else {
+            //     log::warn!("  FAR not found in eBPF map for FAR ID={}", far.far_id);
+            // }
+        }
+
+        // Update srv.session (for sync with Redis)
+        if let Some(sess) = srv.sessions.get_mut(&local_seid) {
+            sess.gnb_ip = new_gnb_ip;
+            sess.teid = new_teid;
+        }
+    }
+
+    Ok(
+        builder::build_session_modification_response( header.seq_num, cp_seid)
+    )
+}
+
+
 /// Session Deletion 처리 — eBPF 맵에서 세션 제거
 fn handle_session_deletion( header: &PfcpHeader,
                             body: &[u8],
@@ -329,6 +415,10 @@ pub fn handle_message ( data: &[u8],
 
         PFCP_SESSION_ESTABLISHMENT_REQ => {
             handle_session_establishment(&header, body, server, session_map, pdr_map, far_map)
+        }
+
+        PFCP_SESSION_MODIFICATION_REQ => {
+            handle_session_modification(&header, body, server, session_map, far_map)
         }
 
         PFCP_SESSION_DELETION_REQ => {

@@ -44,7 +44,7 @@ static IF_INDEX: aya_ebpf::maps::Array<u32> = aya_ebpf::maps::Array::with_max_en
 
 #[map]
 static GW_MAC: aya_ebpf::maps::Array<upf_edge_common::MacAddr> =
-    aya_ebpf::maps::Array::with_max_entries(1, 0);
+    aya_ebpf::maps::Array::with_max_entries(2, 0); // 0: upfedge0, 1: bNB
 
 
 //==============================================================
@@ -603,12 +603,6 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
     // let opt_len = GTPU_OPT_LEN;
     info!(ctx, "gtpu.flags=0x{:x}, opt_len={}", gtpu.flags, opt_len);
 
-    let dst_mac = unsafe {
-        match GW_MAC.get(0) {
-            Some(m) => m.addr,
-            None => [0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
-        }
-    };
 
     // 6. external ETH mac address save
     let eth_dst = unsafe {
@@ -642,9 +636,13 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
         return Ok(xdp_action::XDP_PASS);
     }
 
-    let br_mac : [u8; 6] = [0x92, 0xb7, 0x9a, 0x83, 0xc1, 0x19];
+    let br_mac = unsafe {
+        match GW_MAC.get(0) {
+            Some(m) => m.addr,
+            None => return Ok(xdp_action::XDP_PASS), //[0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+        }
+    };
     unsafe {
-        // core::ptr::write_unaligned((new_start) as *mut [u8; 6], eth_src);
         core::ptr::write_unaligned((new_start) as *mut [u8; 6], br_mac);
         core::ptr::write_unaligned((new_start + 6) as *mut [u8; 6], eth_dst);
         core::ptr::write_unaligned((new_start + 12) as *mut u16, 0x0008u16);
@@ -722,7 +720,8 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
     // Eth(14) + IP(20) + UDP(8) + GTP(8) = 50
     // [                      ][Originial IP packet]
     // ^ <----------------------^
-    let add_len = (ETH_HDR_LEN + IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN) as i32;
+    // let add_len = (ETH_HDR_LEN + IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN) as i32;
+    let add_len = (IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN + 8) as i32;
     if unsafe { bpf_xdp_adjust_head(ctx.ctx, -add_len)} != 0 {
         return Ok(xdp_action::XDP_PASS);
     }
@@ -730,14 +729,22 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
     // 7. Re-verify Pointer
     let data = ctx.data();
     let data_end = ctx.data_end();
-    let total_hdr = add_len as usize;
+    // let total_hdr = add_len as usize;
+    let total_hdr = (ETH_HDR_LEN as i32 + add_len) as usize;
     if data + total_hdr > data_end {
         return Ok(xdp_action::XDP_PASS);
     }
 
 
+    let gnb_mac = unsafe {
+        match GW_MAC.get(1) {
+            Some(m) => m.addr,
+            None => return Ok(xdp_action::XDP_PASS),
+        }
+    };
+
     let eth = EthHdr {
-        dst: eth_src,
+        dst: gnb_mac,
         src: eth_dst,
         eth_type: 0x0008u16,
     };
@@ -758,7 +765,7 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
     //  ^         |
     //  ----------+
     //            data
-    let outer_ip_len = (IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN) as u16 + inner_ip_tot_len;
+    let outer_ip_len = (IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN + 8) as u16 + inner_ip_tot_len;
     let ip = IpHdr {
         version_ihl: 0x45,
         tos: 0,
@@ -786,7 +793,7 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
     //            ^-->^
     //                |
     //                data
-    let udp_len = (UDP_HDR_LEN + GTPU_HDR_LEN) as u16 + inner_ip_tot_len;
+    let udp_len = (UDP_HDR_LEN + GTPU_HDR_LEN + 8) as u16 + inner_ip_tot_len;
     let udp = UdpHdr {
         source: 2152u16.to_be(),
         dest: 2152u16.to_be(),
@@ -802,9 +809,9 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
     // 11. GTP-U Header
     // [Ethernet][IP][UDP][GTP]
     //                    ^
-    let gtp_len  = inner_ip_tot_len;
+    let gtp_len  = inner_ip_tot_len + 8;
     let gtpu = GtpuHdr {
-        flags: 0x30, //version 1, PT=1, E=0, S=0, PN=0
+        flags: 0x34, //version 1, PT=1, E=0, S=0, PN=0
         msg_type: GTPU_GPDU,
         length: gtp_len.to_be(),
         teid: session.teid,
@@ -815,10 +822,35 @@ fn try_encap(ctx: &XdpContext) -> Result<u32, ()>
             gtpu);
     }
 
+     // PDU Session Container Extension Header (Downlink, QFI=1)
+    let ext_bytes: [u8; 8] = [
+        0x00, 0x00,  // sequence number
+        0x00,        // N-PDU number
+        0x85,        // next ext type = PDU Session Container
+        0x01,        // ext header length = 1 (× 4 bytes)
+        0x00,        // PDU Type=0 (Downlink), spare
+        0x01,        // spare=0, QFI=1
+        0x00,        // next ext type = 0 (no more)
+    ];
+    unsafe {
+        core::ptr::copy_nonoverlapping(
+            ext_bytes.as_ptr(),
+            (data + ETH_HDR_LEN + IP_HDR_LEN + UDP_HDR_LEN + GTPU_HDR_LEN) as *mut u8,
+            8,
+        );
+    }
+
     // Done.
     info!(ctx, "Encapsulated: TEID={}", u32::from_be(session.teid));
 
-    Ok(xdp_action::XDP_PASS)
+    let n3_ifindex = unsafe {
+        match IF_INDEX.get(0) {
+            Some(&idx) => idx,
+            None => return Ok(xdp_action::XDP_PASS),
+        }
+    };
+
+    Ok(unsafe { bpf_redirect(n3_ifindex, 0) as u32 })
 }
 
 

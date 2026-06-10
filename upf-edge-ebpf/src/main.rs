@@ -149,21 +149,21 @@ fn try_upf_edge(ctx: &XdpContext) -> Result<u32, ()> {
 
     // GTP-U 확인 후, src IP 필터 추가
     // Uplink만 처리: src = gNB IP (172.22.0.23)
-    let src_ip = unsafe {
-        match ptr_at::<u32>(ctx, ETH_HDR_LEN + 12) {
-            Some(p) => u32::from_be(*p),
-            None => return Ok(xdp_action::XDP_PASS),
-        }
-    };
+    // let src_ip = unsafe {
+    //     match ptr_at::<u32>(ctx, ETH_HDR_LEN + 12) {
+    //         Some(p) => u32::from_be(*p),
+    //         None => return Ok(xdp_action::XDP_PASS),
+    //     }
+    // };
 
 
     let teid = u32::from_be(gtpu.teid);
     info!(ctx, "GTP-U packet: TEID={}", teid);
 
     // 172.22.0.23 = 0xac160017
-    if src_ip != 0xac160017 {
-        return Ok(xdp_action::XDP_PASS);  // Downlink는 건드리지 않음
-    }
+    // if src_ip != 0xac160017 {
+    //     return Ok(xdp_action::XDP_PASS);  // Downlink는 건드리지 않음
+    // }
 
     // 5. Optional Field Calc
     let opt_len = if gtpu.flags & ( GTPU_FLAG_E ) != 0 {

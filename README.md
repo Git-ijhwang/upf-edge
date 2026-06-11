@@ -23,6 +23,7 @@ Open5GS SMF.
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
 - [Detailed setup](#detailed-setup)
+- [Testing with smf-sim]
 - [Project structure](#project-structure)
 - [eBPF maps](#ebpf-maps)
 - [Troubleshooting](#troubleshooting)
@@ -137,6 +138,8 @@ showed up between "encap function gets called" and "ping reply arrives at UE".
 | Dynamic ifindex from CLI args | ✅ |
 | UE route / neighbor auto-install on Session Establishment | ✅ |
 | Session persistence in Redis (restart recovery) | ✅ |
+| smf-sim PFCP simulator (Scenario 1: full lifecycle) | ✅ |
+| smf-sim Scenarios 2–3 (multi-UE, load) | 🔴 planned |
 | Ratatui TUI (operational view) | 🟡 partial |
 | Prometheus metrics | 🔴 planned |
 | Performance benchmarking | 🔴 planned |
@@ -247,6 +250,115 @@ Scenarios (full list in [`RUNBOOK.md`](RUNBOOK.md)):
 
 ---
 
+## Testing with smf-sim
+
+The `smf-sim` crate is a minimal PFCP SMF simulator that lets you exercise
+`upf-edge`'s control plane in isolation — no Open5GS, no UERANSIM, no
+containers required (other than for MAC learning on startup).
+
+### Why this exists
+
+The full Open5GS + UERANSIM environment is great for end-to-end ping
+validation but painful for fast iteration:
+
+- gNB veth and Docker bridge MACs change on every container recreate
+- AMF/SMF interdependencies mean stopping SMF often takes down NGAP too
+- A single PFCP message change forces a full UE re-attach cycle to retest
+- CI cannot reasonably bring up 15+ containers per PR
+
+`smf-sim` sidesteps all of that. It speaks PFCP directly to `upf-edge` over
+UDP/8805 and runs deterministic scenarios end-to-end in under a second
+(plus a configurable wait for Heartbeats).
+
+### Running scenario 1
+
+Scenario 1 is the full PFCP lifecycle for a single UE:
+
+```
+Association Setup → Session Establishment → Heartbeat × 3
+                  → Session Modification → Session Deletion
+```
+
+The Modification step exercises the same control-plane path Open5GS uses
+when the gNB's N3 endpoint arrives late (see [`docs/PFCP_NOTES.md`](docs/PFCP_NOTES.md) §1).
+
+**One-time setup (in addition to the Detailed setup above):**
+
+```bash
+# Stop Open5GS SMF so smf-sim can take the N4 peer slot
+docker compose -f sa-deploy.yaml stop smf
+
+# Add the smf-sim bind alias on the docker bridge
+sudo ip addr add 172.22.0.50/24 dev br-b9f9cfe60aba
+```
+
+**Run:**
+
+```bash
+# Terminal B: start upf-edge (any veth is fine for --iface-n3
+# since smf-sim doesn't generate GTP-U traffic)
+sudo RUST_LOG=info ./target/release/upf-edge \
+  --iface-n3 upfedge1 \
+  --iface-n6 upfedge0 \
+  --n4-addr 172.22.0.8 \
+  --n3-addr 172.22.0.8
+
+# Terminal C: run scenario 1
+./target/release/smf-sim \
+  --config smf-sim/configs/sim-default.toml \
+  run --scenario 1 --num-ues 1
+```
+
+Expected output from smf-sim:
+
+```
+✓ [1/6] Association Setup
+✓ [2/6] Session Establishment
+✓ [3/6] Heartbeat × 3
+✓ [4/6] Session Modification
+✓ [5/6] Session Deletion
+Scenario 1: PASSED (Association → Est → HB × 3 → Mod → Del)
+```
+
+Total runtime ≈ 50 seconds (most of it waiting for the three Heartbeats).
+
+### Scenarios
+
+| # | Name | Status |
+|---|---|---|
+| 1 | Basic lifecycle (single UE, full PFCP cycle) | ✅ |
+| 2 | Multi-UE concurrent (N=3..100) | 🔴 planned |
+| 3 | Load test (≥ 100 sessions/s) | 🔴 planned |
+
+### What the validator checks
+
+For every response, the validator confirms:
+
+- PFCP version, message type (`request_type + 1`), sequence number
+- All Mandatory IEs present (driven by `pfcp-common/src/dict.rs`)
+- `Cause` IE == 1 (Request Accepted) when present
+- For Session Establishment Response: F-SEID non-zero, Created PDR
+  contains a valid F-TEID (TEID ≠ 0, IP ≠ 0.0.0.0)
+
+This catches regressions in IE encoding, message framing, and the
+dictionary's Mandatory/Conditional/Optional flags — exactly the class of
+bugs that previously required Open5GS to surface.
+
+### Other modes
+
+`smf-sim` also exposes:
+
+```bash
+smf-sim send heartbeat                  # one-shot Heartbeat probe
+smf-sim send association                # one-shot Association Setup
+smf-sim interactive                     # TUI (Ratatui-based, WIP)
+```
+
+`smf-sim --help` for the full CLI.
+
+---
+
+
 ## Project structure
 
 ```
@@ -269,7 +381,12 @@ upf-edge/
 │   ├── dict.rs              IE validation rules
 │   └── builder.rs           Outgoing message builders
 │
-└── smf-sim/               # PFCP SMF simulator (for testing without Open5GS)
+└── smf-sim/               # PFCP SMF simulator (no Open5GS required)
+    ├── main.rs              CLI: run / send / interactive
+    ├── scenario/            Test scenarios (Scenario 1 implemented)
+    ├── transport.rs         UDP transport with retries + timeouts
+    ├── keepalive.rs         Heartbeat keepalive loop
+    └── validator.rs         Response validation (driven by pfcp-common/dict)
 ```
 
 ---
@@ -348,6 +465,7 @@ sudo tcpdump -i any -n "udp port 8805" -c 10
 
 ## Roadmap
 
+- **Phase 2.5**: round out smf-sim — scenarios 2–6 (multi-UE, error handling, load) and CI integration
 - **Phase 3**: performance benchmarking (TRex) vs Open5GS UPF, target ≥ 2× pps
 - **Phase 4**: Ratatui TUI completion, Prometheus exporter, Grafana dashboard
 - **Phase 5**: IPv6 support, multi-UE QoS, write-up + demo video

@@ -20,6 +20,7 @@ use crate::transport::PfcpTransport;
 //         .as_secs() as u32;
 //     unix.wrapping_add(2_208_988_800)
 // }
+static TOTAL_MSG_CNT: u8 = 6;
 
 pub async fn run(
     transport: &PfcpTransport,
@@ -44,7 +45,7 @@ pub async fn run(
 
         cnt_tries += 1;
 
-        tracing::info!("-> [{}/5] Association Setup Request Seq={}", cnt_tries, seq);
+        tracing::info!("-> [{}/{}] Association Setup Request Seq={}", cnt_tries, TOTAL_MSG_CNT, seq);
 
         match transport.send_and_recv(&req).await {
             Ok(rsp) => match crate::validator::validate_response(PFCP_ASSOCIATION_SETUP_REQ, seq, &rsp) {
@@ -75,7 +76,7 @@ pub async fn run(
     }
     */
     tracing::info!("← Association Setup Response: ACCEPTED");
-    tracing::info!("✓ [1/5] Association Setup 완료");
+    tracing::info!("✓ [1/{}] Association Setup 완료", TOTAL_MSG_CNT);
 
     // ── 2. Session Establishment ─────────────────────
     let ue_ip = state.alloc_ue_ip()?;
@@ -116,7 +117,7 @@ pub async fn run(
     });
     let req = msg.finish();
 
-    tracing::info!("→ [2/5] Session Establishment Request (seq={}, UE={})", seq, ue_ip);
+    tracing::info!("→ [2/{}] Session Establishment Request (seq={}, UE={})", seq, TOTAL_MSG_CNT,ue_ip);
     let rsp = transport.send_and_recv(&req).await?;
     crate::validator::validate_response(PFCP_SESSION_ESTABLISHMENT_REQ, seq, &rsp)?;
     let (upf_seid, upf_teid, upf_n3_addr) = crate::validator::extract_session_info(&rsp)?;
@@ -152,7 +153,7 @@ pub async fn run(
     });
 
     tracing::info!("← UPF SEID={:#x}, TEID={:#x}, N3={}", upf_seid, upf_teid, upf_n3_addr);
-    tracing::info!("✓ [2/5] Session Establishment 완료");
+    tracing::info!("✓ [2/{}] Session Establishment 완료", TOTAL_MSG_CNT);
 
     // ── 3. Heartbeat × 3 ────────────────────────────
     /*
@@ -180,18 +181,47 @@ pub async fn run(
     tracing::info!("✓ [3/5] Heartbeat × 3 완료");
     */
     let wait_secs = config.timing.heartbeat_interval_sec * 3 + 5;
-    tracing::info!("[3/5] keepalive waiting... {}s (expect Heartbeat 3 times)", wait_secs);
+    tracing::info!("[3/{}] keepalive waiting... {}s (expect Heartbeat 3 times)", TOTAL_MSG_CNT, wait_secs);
 
     tokio::time::sleep(Duration::from_secs(wait_secs)).await;
-    tracing::info!("✓ [3/5] Heartbeat × 3 완료");
+    tracing::info!("✓ [3/{}] Heartbeat × 3 완료", TOTAL_MSG_CNT);
 
     // ── 4. Session Deletion ─────────────────────────
+    let seq = state.next_seq_num();
+    let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_MODIFICATION_REQ, upf_seid, seq);
+    let mut msg = MsgBuilder::new(hdr);
+
+    let new_gnb_teid: u32 = 0xdead_beef;
+    let new_gnb_addr = config.network.gnb_addr;
+
+    msg.add_update_far(&FarParams {
+        far_id: 2,
+        apply_action: ACTION_FORW,
+        dest_interface: INTERFACE_ACCESS,
+        outer_header_creation: Some(ie::OuterHeaderCreation {
+            teid: new_gnb_teid,
+            peer_addr: new_gnb_addr,
+            port: 2152,
+        }),
+    });
+
+    let req = msg.finish();
+    tracing::info!("[4/{}] Session Modification Request(Seq={} SEID={:#x} new gNB={}, TEID={:#x})",
+        TOTAL_MSG_CNT, seq, upf_seid, new_gnb_addr, new_gnb_teid);
+    
+    let rsp = transport.send_and_recv(&req).await?;
+    crate::validator::validate_response(PFCP_SESSION_MODIFICATION_REQ, seq, &rsp)?;
+    tracing::info!("← Session Modification Response: ACCEPTED");
+    tracing::info!("✓ [4/{}] Session Modification 완료", TOTAL_MSG_CNT);
+
+
+    // ── 5. Session Deletion ─────────────────────────
     let seq = state.next_seq_num();
     let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_DELETION_REQ, upf_seid, seq);
     let msg = MsgBuilder::new(hdr);
     let req = msg.finish();
 
-    tracing::info!("→ [4/5] Session Deletion Request (seq={}, SEID={:#x})", seq, upf_seid);
+    tracing::info!("→ [4/{}] Session Deletion Request (seq={}, SEID={:#x})", TOTAL_MSG_CNT, seq, upf_seid);
     let rsp = transport.send_and_recv(&req).await?;
     crate::validator::validate_response(PFCP_SESSION_DELETION_REQ, seq, &rsp)?;
 
@@ -206,11 +236,11 @@ pub async fn run(
     } */
     state.sessions.remove(&cp_seid);
     tracing::info!("← Session Deletion Response: ACCEPTED");
-    tracing::info!("✓ [4/5] Session Deletion 완료");
+    tracing::info!("✓ [4/{}] Session Deletion 완료", TOTAL_MSG_CNT);
 
     // ── 5. 결과 요약 ────────────────────────────────
     tracing::info!("═══════════════════════════════════════");
-    tracing::info!("  Scenario 1: PASSED");
+    tracing::info!("  Scenario 1: PASSED (Association -> Est -> HB x 3 -> Mod -> Del");
     tracing::info!("  Sessions: 0 remaining");
     tracing::info!("═══════════════════════════════════════");
 

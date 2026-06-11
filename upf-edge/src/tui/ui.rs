@@ -21,13 +21,6 @@ pub fn render(frame: &mut Frame, app: &App, textarea: &TextArea)
 {
     let area = frame.area();
 
-    // ┌─ 상태바 (3줄) ─┐
-    // ├─ 서버 상태 ────┤  ← CPU/Memory/Session 게이지
-    // ├─ 로그 ────────┤
-    // ├─ 입력창 (3줄) ─┤
-    // └─ 도움말 (3줄) ─┘
-
-
     let chunk = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -55,8 +48,8 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect)
         Span::styled("❌ Not Associated", Style::default().fg(Color::Red))
     };
 
-    let sessions = Span::raw(format!("  │  세션: {}개", app.session_count()));
-    let hb = Span::raw(format!("  │  HB: {}초 전", app.last_hb_secs));
+    let sessions = Span::raw(format!("  │  {} Session", app.session_count()));
+    let hb = Span::raw(format!("  │  HB: {} Sec.", app.last_hb_secs));
     let line = Line::from(vec![
         assoc, sessions, hb
         ]);

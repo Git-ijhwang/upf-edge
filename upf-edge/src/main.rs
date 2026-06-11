@@ -178,8 +178,8 @@ async fn main() -> anyhow::Result<()> {
         if_index.set(1, n6_redirect_ifindex, 0)?;
 
         // println!("IF_INDEX set: eth0=2, N6=({})", n6_redirect_ifindex);
-        println!("IF_INDEX set: N3({})={}, N6(upfedge1)={}", opt.iface_n3, n3_redirect_ifindex, n6_redirect_ifindex);
-
+        println!("IF_INDEX[0] (N3, {})={}, IF_INDEX[1] (upfedge1)={}",
+            opt.iface_n3, n3_redirect_ifindex, n6_redirect_ifindex);
     }
 
     let session_map: HashMap<_, SessionKey, SessionInfo> =

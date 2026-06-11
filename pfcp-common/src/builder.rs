@@ -113,6 +113,25 @@ impl MsgBuilder {
         self.add_ie(PFCP_IE_CREATE_FAR, &inner);
     }
 
+    pub fn add_update_far(&mut self, f: &FarParams) {
+        let mut inner = Vec::new();
+
+        Self::append_ie(&mut inner, PFCP_IE_FAR_ID, &f.far_id.to_be_bytes());
+        Self::append_ie(&mut inner, PFCP_IE_APPLY_ACTION, &[f.apply_action]);
+
+        let mut fwd = Vec::new();
+        Self::append_ie(&mut fwd, PFCP_IE_DESTINATION_INTERFACE, &[f.dest_interface]);
+        if let Some(ref ohc) = f.outer_header_creation {
+            let mut val = vec![0x01, 0x00]; // GTP-U/UDP/IPv4
+            val.extend_from_slice(&ohc.teid.to_be_bytes());
+            val.extend_from_slice(&ohc.peer_addr.octets());
+            Self::append_ie(&mut fwd, PFCP_IE_OUTER_HEADER_CREATION, &val);
+        }
+        Self::append_ie(&mut inner, PFCP_IE_FORWARDING_PARAMETERS, &fwd);
+
+        self.add_ie(PFCP_IE_UPDATE_FAR, &inner);
+    }
+
     /// 내부 헬퍼: Vec에 IE TLV 추가
     fn append_ie(buf: &mut Vec<u8>, ie_type: u16, value: &[u8]) {
         buf.extend_from_slice(&ie_type.to_be_bytes());

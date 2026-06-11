@@ -1,6 +1,6 @@
-//! 시나리오 1: 기본 세션 생명주기
+//! Scenario 1: Basic Session Lifecycle
 //!
-//! Association Setup → Session Establishment → Heartbeat × 3 → Session Deletion
+//! Association Setup → Session Establishment → Heartbeat × 3 → Session Modification →  Session Deletion
 
 use tokio::time::Duration;
 use pfcp_common::builder::{MsgBuilder, PdrParams, FarParams};
@@ -12,15 +12,7 @@ use crate::config::SimConfig;
 use crate::state::{SimState, SimSession};
 use crate::transport::PfcpTransport;
 
-/// NTP 타임스탬프
-// fn ntp_now() -> u32 {
-//     let unix = std::time::SystemTime::now()
-//         .duration_since(std::time::UNIX_EPOCH)
-//         .unwrap()
-//         .as_secs() as u32;
-//     unix.wrapping_add(2_208_988_800)
-// }
-static TOTAL_MSG_CNT: u8 = 6;
+static TOTAL_MSG_CNT: u8 = 5;
 
 pub async fn run(
     transport: &PfcpTransport,
@@ -45,7 +37,7 @@ pub async fn run(
 
         cnt_tries += 1;
 
-        tracing::info!("-> [{}/{}] Association Setup Request Seq={}", cnt_tries, TOTAL_MSG_CNT, seq);
+        tracing::info!("→ [{}/{}] Association Setup Request Seq={}", cnt_tries, TOTAL_MSG_CNT, seq);
 
         match transport.send_and_recv(&req).await {
             Ok(rsp) => match crate::validator::validate_response(PFCP_ASSOCIATION_SETUP_REQ, seq, &rsp) {
@@ -65,24 +57,15 @@ pub async fn run(
 
     };
 
-    /*
-    let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
-    anyhow::ensure!(rsp_hdr.msg_type == PFCP_ASSOCIATION_SETUP_RSP,
-        "expected type {}, got {}", PFCP_ASSOCIATION_SETUP_RSP, rsp_hdr.msg_type);
-    let ies = ie::iter_ies(body);
-    let cause = ies.iter().find(|i| i.ie_type == PFCP_IE_CAUSE);
-    if let Some(c) = cause {
-        anyhow::ensure!(c.value[0] == CAUSE_REQUEST_ACCEPTED, "Cause={}", c.value[0]);
-    }
-    */
     tracing::info!("← Association Setup Response: ACCEPTED");
-    tracing::info!("✓ [1/{}] Association Setup 완료", TOTAL_MSG_CNT);
+    tracing::info!("✓ [{}/{}] Association Setup Completed.", cnt_tries, TOTAL_MSG_CNT);
 
     // ── 2. Session Establishment ─────────────────────
     let ue_ip = state.alloc_ue_ip()?;
     let gnb_teid = state.alloc_gnb_teid();
     let cp_seid = state.alloc_cp_seid();
     let seq = state.next_seq_num();
+    cnt_tries += 1;
 
     let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_ESTABLISHMENT_REQ, 0, seq);
     let mut msg = MsgBuilder::new(hdr);
@@ -117,34 +100,10 @@ pub async fn run(
     });
     let req = msg.finish();
 
-    tracing::info!("→ [2/{}] Session Establishment Request (seq={}, UE={})", seq, TOTAL_MSG_CNT,ue_ip);
+    tracing::info!("→ [{}/{}] Session Establishment Request (seq={}, UE={})", cnt_tries, TOTAL_MSG_CNT, seq, ue_ip);
     let rsp = transport.send_and_recv(&req).await?;
     crate::validator::validate_response(PFCP_SESSION_ESTABLISHMENT_REQ, seq, &rsp)?;
     let (upf_seid, upf_teid, upf_n3_addr) = crate::validator::extract_session_info(&rsp)?;
-
-    /*
-    let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
-    anyhow::ensure!(rsp_hdr.msg_type == PFCP_SESSION_ESTABLISHMENT_RSP,
-        "expected type {}, got {}", PFCP_SESSION_ESTABLISHMENT_RSP, rsp_hdr.msg_type);
-
-    let ies = ie::iter_ies(body);
-    let cause = ies.iter().find(|i| i.ie_type == PFCP_IE_CAUSE);
-    if let Some(c) = cause {
-        anyhow::ensure!(c.value[0] == CAUSE_REQUEST_ACCEPTED, "Cause={}", c.value[0]);
-
-    // UPF가 할당한 SEID 추출
-    let fseid = ies.iter().find(|i| i.ie_type == PFCP_IE_FSEID)
-        .ok_or_else(|| anyhow::anyhow!("missing F-SEID"))?;
-    let (upf_seid, _) = ie::parse_fseid(fseid.value)?;
-
-    // UPF가 할당한 TEID 추출
-    let created_pdr = ies.iter().find(|i| i.ie_type == PFCP_IE_CREATED_PDR)
-        .ok_or_else(|| anyhow::anyhow!("missing Created PDR"))?;
-    let inner = ie::iter_ies(created_pdr.value);
-    let fteid = inner.iter().find(|i| i.ie_type == PFCP_IE_FTEID)
-        .ok_or_else(|| anyhow::anyhow!("missing F-TEID in Created PDR"))?;
-    let (upf_teid, upf_n3_addr) = ie::parse_fteid(fteid.value)?;
-    } */
 
     // 세션 상태 저장
     state.sessions.insert(cp_seid, SimSession {
@@ -153,43 +112,21 @@ pub async fn run(
     });
 
     tracing::info!("← UPF SEID={:#x}, TEID={:#x}, N3={}", upf_seid, upf_teid, upf_n3_addr);
-    tracing::info!("✓ [2/{}] Session Establishment 완료", TOTAL_MSG_CNT);
+    tracing::info!("✓ [{}/{}] Session Establishment Completed.", cnt_tries, TOTAL_MSG_CNT);
 
     // ── 3. Heartbeat × 3 ────────────────────────────
-    /*
-    for i in 1..=3 {
-        tracing::info!("  Heartbeat {}/3 — {}초 대기...",
-            i, config.timing.heartbeat_interval_sec);
-        tokio::time::sleep(Duration::from_secs(
-            config.timing.heartbeat_interval_sec
-        )).await;
-
-        let seq = state.next_seq_num();
-        let hdr = PfcpHeader::new_node_msg(PFCP_HEARTBEAT_REQ, seq);
-        let mut msg = MsgBuilder::new(hdr);
-        msg.add_recovery_timestamp(ntp_now());
-        let req = msg.finish();
-
-        tracing::info!("→ [3/5] Heartbeat Request (seq={}, {}/3)", seq, i);
-        let rsp = transport.send_and_recv(&req).await?;
-
-        let (rsp_hdr, _) = PfcpHeader::decode(&rsp)?;
-        anyhow::ensure!(rsp_hdr.msg_type == PFCP_HEARTBEAT_RSP,
-            "expected Heartbeat Response, got {}", rsp_hdr.msg_type);
-        tracing::info!("← Heartbeat Response (seq={})", rsp_hdr.seq_num);
-    }
-    tracing::info!("✓ [3/5] Heartbeat × 3 완료");
-    */
+    cnt_tries += 1;
     let wait_secs = config.timing.heartbeat_interval_sec * 3 + 5;
-    tracing::info!("[3/{}] keepalive waiting... {}s (expect Heartbeat 3 times)", TOTAL_MSG_CNT, wait_secs);
+    tracing::info!("← [{}/{}] keepalive waiting... {}s (expect Heartbeat 3 times)", cnt_tries, TOTAL_MSG_CNT, wait_secs);
 
     tokio::time::sleep(Duration::from_secs(wait_secs)).await;
-    tracing::info!("✓ [3/{}] Heartbeat × 3 완료", TOTAL_MSG_CNT);
+    tracing::info!("✓ [{}/{}] Heartbeat × 3 Completed.", cnt_tries, TOTAL_MSG_CNT);
 
     // ── 4. Session Deletion ─────────────────────────
     let seq = state.next_seq_num();
     let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_MODIFICATION_REQ, upf_seid, seq);
     let mut msg = MsgBuilder::new(hdr);
+    cnt_tries += 1;
 
     let new_gnb_teid: u32 = 0xdead_beef;
     let new_gnb_addr = config.network.gnb_addr;
@@ -206,13 +143,13 @@ pub async fn run(
     });
 
     let req = msg.finish();
-    tracing::info!("[4/{}] Session Modification Request(Seq={} SEID={:#x} new gNB={}, TEID={:#x})",
-        TOTAL_MSG_CNT, seq, upf_seid, new_gnb_addr, new_gnb_teid);
+    tracing::info!("→ [{}/{}] Session Modification Request(Seq={} SEID={:#x} new gNB={}, TEID={:#x})",
+        cnt_tries, TOTAL_MSG_CNT, seq, upf_seid, new_gnb_addr, new_gnb_teid);
     
     let rsp = transport.send_and_recv(&req).await?;
     crate::validator::validate_response(PFCP_SESSION_MODIFICATION_REQ, seq, &rsp)?;
     tracing::info!("← Session Modification Response: ACCEPTED");
-    tracing::info!("✓ [4/{}] Session Modification 완료", TOTAL_MSG_CNT);
+    tracing::info!("✓ [{}/{}] Session Modification Completed.", cnt_tries, TOTAL_MSG_CNT);
 
 
     // ── 5. Session Deletion ─────────────────────────
@@ -220,27 +157,19 @@ pub async fn run(
     let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_DELETION_REQ, upf_seid, seq);
     let msg = MsgBuilder::new(hdr);
     let req = msg.finish();
+    cnt_tries += 1;
 
-    tracing::info!("→ [4/{}] Session Deletion Request (seq={}, SEID={:#x})", TOTAL_MSG_CNT, seq, upf_seid);
+    tracing::info!("→ [{}/{}] Session Deletion Request (seq={}, SEID={:#x})", cnt_tries, TOTAL_MSG_CNT, seq, upf_seid);
     let rsp = transport.send_and_recv(&req).await?;
     crate::validator::validate_response(PFCP_SESSION_DELETION_REQ, seq, &rsp)?;
 
-    /*
-    let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
-    anyhow::ensure!(rsp_hdr.msg_type == PFCP_SESSION_DELETION_RSP,
-        "expected type {}, got {}", PFCP_SESSION_DELETION_RSP, rsp_hdr.msg_type);
-    let ies = ie::iter_ies(body);
-    let cause = ies.iter().find(|i| i.ie_type == PFCP_IE_CAUSE);
-    if let Some(c) = cause {
-        anyhow::ensure!(c.value[0] == CAUSE_REQUEST_ACCEPTED, "Cause={}", c.value[0]);
-    } */
     state.sessions.remove(&cp_seid);
     tracing::info!("← Session Deletion Response: ACCEPTED");
-    tracing::info!("✓ [4/{}] Session Deletion 완료", TOTAL_MSG_CNT);
+    tracing::info!("✓ [{}/{}] Session Deletion Completed.", cnt_tries, TOTAL_MSG_CNT);
 
-    // ── 5. 결과 요약 ────────────────────────────────
+    // ── 6. Result Summary ────────────────────────────────
     tracing::info!("═══════════════════════════════════════");
-    tracing::info!("  Scenario 1: PASSED (Association -> Est -> HB x 3 -> Mod -> Del");
+    tracing::info!("  Scenario 1: PASSED (Association -> Est -> HB x 3 -> Mod -> Del)");
     tracing::info!("  Sessions: 0 remaining");
     tracing::info!("═══════════════════════════════════════");
 

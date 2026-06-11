@@ -52,7 +52,7 @@ pub async fn run (transport:    Arc<PfcpTransport>,
                   event_tx:     tokio::sync::mpsc::Sender<KeepaliveEvent>,
                  )
 {
-    tracing::info!("Keepalive started (interval={}s",
+    tracing::info!("Keepalive started (interval={}s)",
         ht_interval.as_secs());
 
     loop {
@@ -75,7 +75,7 @@ pub async fn run (transport:    Arc<PfcpTransport>,
             msg.add_recovery_timestamp(crate::recovery_ts());
             let req = msg.finish();
 
-            tracing::info!("-> [Keepalive] Heartbeat request (seq={}, idle={:.1}s", seq, elapsed.as_secs_f32());
+            tracing::info!("-> [Keepalive] Heartbeat request (seq={}, idle={:.1}s)", seq, elapsed.as_secs_f32());
 
             match transport.send_and_recv(&req).await {
                 Ok(rsp) => {

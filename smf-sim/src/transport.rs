@@ -101,33 +101,6 @@ impl PfcpTransport  {
                     }
                 }
             }
-            /*
-            let mut buf = vec![0u8; 4096];
-            match timeout(self.response_timeout, self.socket.recv_from(&mut buf)).await {
-
-                // Case 1. Successfully Receive the Response
-                Ok(Ok((n, _src))) => {
-                    buf.truncate(n);
-                    pfcp_common::dump::print_hex(&buf, n);
-
-                    // Update last_activity
-                    *self.last_activity.lock().unwrap() = Instant::now();
-                    return Ok(buf);
-                }
-
-                // Case 2. Error Response
-                Ok(Err(e)) => {
-                    last_err = Some(anyhow::anyhow!("recv error: {}", e));
-                }
-
-                // Case 3. Timeout
-                Err(_) => {
-                    last_err = Some(anyhow::anyhow !(
-                        "Timeout after {}ms", self.response_timeout.as_millis()
-                    ));
-                }
-            }
-            */
         }
 
         Err(last_err.unwrap())

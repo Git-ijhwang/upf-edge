@@ -24,7 +24,7 @@ Open5GS SMF.
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
 - [Detailed setup](#detailed-setup)
-- [Testing with smf-sim](#testing with smf-sim)
+- [Testing with smf-sim](#testing-with-smf-sim)
 - [Project structure](#project-structure)
 - [eBPF maps](#ebpf-maps)
 - [Troubleshooting](#troubleshooting)

@@ -32,6 +32,26 @@ Open5GS SMF.
 
 ---
 
+## Demo
+
+### PFCP control plane (smf-sim driving upf-edge)
+
+https://github.com/Git-ijhwang/upf-edge/raw/main/docs/media/session_test.mp4
+
+End-to-end PFCP cycle without Open5GS:
+`add session 1` → both sides show the session →
+`del session 0x01` → both sides confirm removal.
+
+### Full 5G data plane (Open5GS + UERANSIM)
+
+https://github.com/Git-ijhwang/upf-edge/raw/main/docs/media/ping_test.mp4
+
+upf-edge running with Open5GS SMF + UERANSIM gNB and UE.
+The UE attaches, a PDU session is established via PFCP,
+and `ping 8.8.8.8` works end-to-end through the eBPF data plane.
+
+---
+
 ## Architecture
 
 `upf-edge` replaces the data-plane component of an Open5GS deployment. The 5G

@@ -49,9 +49,9 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect)
     };
 
     let sessions = Span::raw(format!("  │  {} Session", app.session_count()));
-    let hb = Span::raw(format!("  │  HB: {} Sec.", app.last_hb_secs));
+    // let hb = Span::raw(format!("  │  HB: {} Sec.", app.last_hb_secs));
     let line = Line::from(vec![
-        assoc, sessions, hb
+        assoc, sessions
         ]);
     
     let block = Block::default()

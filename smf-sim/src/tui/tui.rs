@@ -43,9 +43,9 @@ fn render_status(frame: &mut Frame, app: &App, area: Rect)
         Span::styled("❌ Not Associated", Style::default().fg(Color::Red))
     };
 
-    let sessions = Span::raw(format!("  │  세션: {}개", app.session_count()));
-    let hb = Span::raw(format!("  │  HB: {}초 전", app.last_hb_secs));
-    let line = Line::from(vec![assoc, sessions, hb]);
+    let sessions = Span::raw(format!("  │ {} Sessions", app.session_count()));
+    // let hb = Span::raw(format!("  │  HB: {} Sec.", app.last_hb_secs));
+    let line = Line::from(vec![assoc, sessions]);
 
     let block = Block::default()
         .title(" smf-sim ")

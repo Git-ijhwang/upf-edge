@@ -16,6 +16,7 @@ Open5GS SMF.
 
 ## Table of contents
 
+- [Demo](#demo)
 - [Architecture](#architecture)
 - [Data plane flow](#data-plane-flow)
 - [What's implemented](#whats-implemented)
@@ -23,7 +24,7 @@ Open5GS SMF.
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
 - [Detailed setup](#detailed-setup)
-- [Testing with smf-sim]
+- [Testing with smf-sim](#Testing with smf-sim)
 - [Project structure](#project-structure)
 - [eBPF maps](#ebpf-maps)
 - [Troubleshooting](#troubleshooting)

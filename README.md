@@ -263,7 +263,7 @@ sudo iptables -t nat -A POSTROUTING -s 192.168.100.0/24 ! -o $BR -j MASQUERADE
 
 ### Per-session runbook
 
-Scenarios (full list in [`RUNBOOK.md`](RUNBOOK.md)):
+Scenarios (full list in [`RUNBOOK.md`](docs/RUNBOOK.md)):
 
 1. **VM reboot**: redo the one-time setup, then Quick start
 2. **Code change → retest**: `pkill upf-edge`, rebuild, restart with same args

@@ -131,7 +131,7 @@ Two XDP entry points: `upf_edge_n3` on the gNB-side veth, `upf_edge_n6` on
 
 ### Downlink: Internet → UE
 
-![Downlink Internet to UE](docs/media/internet_to_use.png)
+![Downlink Internet to UE](docs/media/internet_to_ue.png)
 
 The downlink path was the hardest part of Phase 2 — see
 [`docs/PFCP_NOTES.md`](docs/PFCP_NOTES.md) for the bugs that

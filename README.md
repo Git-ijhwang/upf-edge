@@ -127,38 +127,11 @@ Two XDP entry points: `upf_edge_n3` on the gNB-side veth, `upf_edge_n6` on
 
 ### Uplink: UE → Internet
 
-```mermaid
-sequenceDiagram
-    participant UE
-    participant gNB
-    participant XDP_N3 as XDP (N3)
-    participant K as Kernel routing
-    participant Net as Internet
-
-    UE->>gNB: IP packet
-    gNB->>XDP_N3: GTP-U (UDP/2152)
-    Note over XDP_N3: Validate Eth/IP/UDP/GTP-U<br/>Strip outer + opt headers<br/>Rewrite Eth (dst = upfedge0)
-    XDP_N3->>K: bpf_redirect(upfedge1)
-    K->>Net: NAT via eth0
-```
+![Uplink UE to Internet](docs/media/ue_to_internet.png)
 
 ### Downlink: Internet → UE
 
-```mermaid
-sequenceDiagram
-    participant Net as Internet
-    participant K as Kernel routing
-    participant XDP_N6 as XDP (N6)
-    participant gNB
-    participant UE
-
-    Net->>K: Reply IP packet
-    K->>K: Route 192.168.100.X/32<br/>via upfedge1 (auto-installed)
-    K->>XDP_N6: Packet arrives on upfedge0 RX
-    Note over XDP_N6: SESSION_MAP lookup by UE IP<br/>adjust_head -36<br/>Build outer Eth/IP/UDP/GTP-U<br/>Add PDU Session Container ext (8B)<br/>dst MAC = GW_MAC[1] (gNB)
-    XDP_N6->>gNB: bpf_redirect(N3 veth)<br/>GTP-U (flags=0x34)
-    gNB->>UE: Decoded IP packet
-```
+![Downlink Internet to UE](docs/media/internet_to_use.png)
 
 The downlink path was the hardest part of Phase 2 — see
 [`docs/PFCP_NOTES.md`](docs/PFCP_NOTES.md) for the bugs that
@@ -553,39 +526,7 @@ upf-edge/
 Userspace populates these on startup and on every PFCP event. The XDP programs
 do read-only lookups during packet processing.
 
-```mermaid
-flowchart LR
-    subgraph US[Userspace]
-        BOOT[main.rs<br/>boot-time]
-        PFCP[handle_msg.rs<br/>per PFCP message]
-    end
-
-    subgraph Maps[eBPF maps]
-        GW["GW_MAC<br/>Array&lt;MacAddr&gt;<br/>0: upfedge0<br/>1: gNB"]
-        IF["IF_INDEX<br/>Array&lt;u32&gt;<br/>0: N3 veth<br/>1: upfedge1"]
-        SES["SESSION_MAP<br/>HashMap&lt;ue_ip, SessionInfo&gt;"]
-        PDR["PDR_MAP<br/>HashMap&lt;pdr_id, PdrValue&gt;"]
-        FAR["FAR_MAP<br/>HashMap&lt;far_id, FarValue&gt;"]
-    end
-
-    subgraph XDP[Kernel XDP]
-        N3[try_upf_edge<br/>uplink decap]
-        N6[try_encap<br/>downlink encap]
-    end
-
-    BOOT -.->|read MAC from sysfs| GW
-    BOOT -.->|read ifindex from sysfs| IF
-    PFCP -.->|Session Est/Mod/Del| SES
-    PFCP -.->|Session Est| PDR
-    PFCP -.->|Session Est/Mod| FAR
-
-    GW -->|lookup| N3
-    GW -->|lookup| N6
-    IF -->|lookup| N3
-    IF -->|lookup| N6
-    SES -->|lookup| N3
-    SES -->|lookup| N6
-```
+![eBPF map](docs/media/eBPF%20Map.png)
 
 ---
 

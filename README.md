@@ -508,8 +508,8 @@ upf-edge/
 │   │   ├── handle_msg.rs        Per-message-type handlers + UE route automation
 │   │   ├── session_store.rs     Redis persistence
 │   │   └── pfcp_server.rs       PFCP UDP listener
-|   └── configs/
-|       └── upf-edge-default.toml   # auto-discovered config
+│    └── configs/
+│        └── upf-edge-default.toml   # auto-discovered config
 │
 ├── upf-edge-ebpf/         # Kernel XDP programs
 │   └── main.rs              try_upf_edge (N3 decap), try_encap (N6 encap)

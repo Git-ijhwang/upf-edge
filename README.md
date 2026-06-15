@@ -14,6 +14,55 @@ Open5GS SMF.
 
 ---
 
+## Why upf-edge?
+
+5G CUPS (Control / User Plane Separation) lets the user-plane function
+be deployed independently from the control plane. `upf-edge` is built to
+take that role at the **edge** — small enough to live close to the gNB,
+fast enough to push line-rate via eBPF/XDP, and configured by a single
+TOML file so the same binary boots on any Linux host.
+
+### Local breakout: a shorter data path
+
+![Local breakout vs centralized UPF](docs/media/topology-local-breakout.png)
+
+- **Blue path (with upf-edge)** — UE traffic exits to the Internet at the
+  edge, just one hop past the gNB. Round-trip latency stays in the
+  single-digit millisecond range.
+- **Orange path (centralized UPF)** — every UE packet rides the operator
+  backhaul to a central UPF before reaching the Internet. The backhaul
+  adds 10s of milliseconds and consumes capacity for traffic that has
+  no business going to the core.
+
+The control plane (SMF) stays central and programs upf-edge over PFCP/N4.
+Signaling is low-bandwidth and infrequent, so it tolerates the WAN just
+fine.
+
+### Edge-distributable
+
+![Multiple upf-edge instances at different edge sites](docs/media/topology-multi-edge.png)
+
+The whole runtime is a single Rust binary plus one TOML file. Operators
+can scale out by placing one `upf-edge` per edge site, each serving its
+own group of gNBs and breaking out locally. A central SMF configures
+all of them over the same PFCP/N4 interface — exactly what 5G CUPS
+was designed to enable.
+
+### At a glance
+
+|                                  | Centralized UPF                 | upf-edge                              |
+|----------------------------------|---------------------------------|---------------------------------------|
+| **UE → Internet latency**        | gNB → backhaul → central UPF    | gNB → local upf-edge → Internet       |
+|                                  | ≈ 10–100 ms (backhaul)          | ≈ 1–5 ms (local)                      |
+| **Per-packet data plane**        | Userspace, context-switch heavy | eBPF/XDP, fully in-kernel             |
+| **Deployment unit**              | Heavy (full 5G stack node)      | Single Rust binary + TOML config      |
+| **Where it can run**             | Operator data center            | Any Linux host (see [Configuration](#configuration)) |
+| **Control plane location**       | Same site as the data plane     | Anywhere — SMF stays central via PFCP/N4 |
+
+---
+
+
+
 ## Table of contents
 
 - [Demo](#demo)

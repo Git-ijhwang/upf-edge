@@ -52,8 +52,7 @@ was designed to enable.
 
 |                                  | Centralized UPF                 | upf-edge                              |
 |----------------------------------|---------------------------------|---------------------------------------|
-| **UE → Internet latency**        | gNB → backhaul → central UPF    | gNB → local upf-edge → Internet       |
-|                                  | ≈ 10–100 ms (backhaul)          | ≈ 1–5 ms (local)                      |
+| **UE → Internet latency**        | gNB → backhaul → central UPF  ≈ 10–100 ms (backhaul)   | gNB → local upf-edge → Internet  ≈ 1–5 ms (local)      |
 | **Per-packet data plane**        | Userspace, context-switch heavy | eBPF/XDP, fully in-kernel             |
 | **Deployment unit**              | Heavy (full 5G stack node)      | Single Rust binary + TOML config      |
 | **Where it can run**             | Operator data center            | Any Linux host (see [Configuration](#configuration)) |

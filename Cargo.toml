@@ -34,6 +34,9 @@ libc = { version = "0.2.159", default-features = false }
 log = { version = "0.4.22", default-features = false }
 tokio = { version = "1.40.0", default-features = false }
 which = { version = "6.0.0", default-features = false }
+serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }
+toml = { version = "1.1.2", default-features = false, features = ["parse", "serde"] }
+
 
 
 # `std` feature is currently required to build `clap`.

@@ -1,0 +1,42 @@
+# upf-edge default configuration
+#
+# CLI args take precedence over these values.
+# Priority: CLI args > this config file > built-in defaults
+
+[interfaces]
+# N3 interface (gNB side, receives GTP-U)
+# Override: --iface-n3
+n3_iface = "upfedge1"
+
+# N6 interface (Data Network side)
+# Override: --iface-n6
+n6_iface = "upfedge0"
+
+# upf-edge default configuration
+#
+# CLI args take precedence over these values.
+# Priority: CLI args > this config file > built-in defaults
+n3_addr = "172.22.0.8"
+
+[pfcp]
+# Self IP for N4 (PFCP)
+# Override: --n4-addr
+n4_addr = "172.22.0.8"
+
+n4_port = 8805
+
+
+[peers]
+# gNB MAC address (static configuration)
+# If omitted, ARP query against gnb_addr is attempted on boot.
+# gnb_mac = "ae:87:cb:d4:60:46"
+
+# gNB IP address (used for ARP query if gnb_mac is missing)
+gnb_addr = "172.22.0.23"
+
+# SMF IP (informational, used for validation)
+# smf_addr = "172.22.0.7"
+
+[redis]
+url = "redis://127.0.0.1/"
+enabled = true

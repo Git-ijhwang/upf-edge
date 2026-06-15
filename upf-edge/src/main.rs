@@ -5,7 +5,6 @@ use anyhow::Context as _;
 use aya::maps::HashMap;
 use aya::programs::{Xdp, XdpFlags};
 use clap::Parser;
-use redis::acl::Rule::AddCategory;
 
 #[rustfmt::skip]
 use log::{debug, warn};
@@ -13,6 +12,9 @@ use tokio::signal;
 
 use upf_edge_common::{SessionInfo, SessionKey};
 use crate::config::UpfConfig;
+
+use aya::maps::Array;
+use upf_edge_common::MacAddr;
 
 mod pfcp_server;
 mod session_store;
@@ -56,6 +58,7 @@ impl log::Log for TuiLogger {
     fn flush(&self) {}
 }
 
+
 fn override_with_config(cli_value: &str, cli_default: &str, config_value: Option<&str>)
     -> String
 {
@@ -65,6 +68,7 @@ fn override_with_config(cli_value: &str, cli_default: &str, config_value: Option
         config_value.map(|s| s.to_string()).unwrap_or_else(|| cli_value.to_string())
     }
 }
+
 
 fn override_ipv4_with_config(cli_value: std::net::Ipv4Addr,
                             cli_default: std::net::Ipv4Addr,
@@ -124,6 +128,8 @@ fn arp_learn_mac(addr: Ipv4Addr)
         .ok_or_else(|| anyhow::anyhow!("ARP learn failed for {}", addr))
 }
 
+
+/// test documents
 fn parse_mac(s: &str) -> anyhow::Result<[u8; 6]>
 {
     let parts: Vec<u8> = s.trim().split(':')
@@ -135,6 +141,13 @@ fn parse_mac(s: &str) -> anyhow::Result<[u8; 6]>
     }
 
     Ok([ parts[0], parts[1], parts[2], parts[3], parts[4], parts[5] ])
+}
+
+
+fn read_iface_mac(iface: &str) -> anyhow::Result<[u8; 6]>
+{
+    let s = std::fs::read_to_string(format!("/sys/class/net/{}/address", iface))?;
+    parse_mac(s.trim())
 }
 
 
@@ -158,17 +171,6 @@ fn read_gnb_mac(config_mac: Option<&str>,
     anyhow::bail!(
         "gNB MAC unknown: provide either peers.gnb_mac or peers.gnb_addr in config"
     );
-    /*
-    let out = std::process::Command::new("docker")
-        .args(["exec", "nr_gnb", "cat", "/sys/class/net/eth0/address"])
-        .output()?;
-    let s = std::str::from_utf8(&out.stdout)?;
-    let parts: Vec<u8> = s.trim().split(':')
-        .map(|p| u8::from_str_radix(p, 16))
-        .collect::<Result<Vec<_>, _>>()?;
-    if parts.len() != 6 { anyhow::bail!("invalid gNB MAC"); }
-    Ok([parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]])
-    */
 }
 
 
@@ -239,78 +241,32 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    //강제 세션 추가
-    {
-        use aya::maps::Array;
-        use upf_edge_common::MacAddr;
 
-        fn read_iface_mac(iface: &str) -> anyhow::Result<[u8; 6]> {
-            let s = std::fs::read_to_string(format!("/sys/class/net/{}/address", iface))?;
-            let parts: Vec<u8> = s.trim().split(':')
-                .map(|p| u8::from_str_radix(p, 16))
-                .collect::<Result<Vec<_>, _>>()?;
-            if parts.len() != 6 { anyhow::bail!("invalid MAC");}
-            Ok([ parts[0], parts[1], parts[2], parts[3], parts[4], parts[5] ])
-        }
+    let upfedge0_mac = read_iface_mac("upfedge0").context("read upfedge0 MAC")?;
+    let gnb_mac_addr = read_gnb_mac(
+        config.peers.gnb_mac.as_deref(),
+        config.peers.gnb_addr.as_deref(),
+    ).context("read gNB MAC")?;
 
+    let mut gw_mac: Array<_, MacAddr> = Array::try_from(ebpf.map_mut("GW_MAC").unwrap())?;
+    gw_mac.set(0, MacAddr { addr: upfedge0_mac }, 0)?;
+    gw_mac.set(1, MacAddr { addr: gnb_mac_addr }, 0)?;
 
-        let upfedge0_mac = read_iface_mac("upfedge0").context("read upfedge0 MAC")?;
-        let gnb_mac_addr = read_gnb_mac(
-            config.peers.gnb_mac.as_deref(),
-            config.peers.gnb_addr.as_deref(),
-        ).context("read gNB MAC")?;
+    let mut if_index: Array<_, u32> = Array::try_from(ebpf.map_mut("IF_INDEX").unwrap())?;
 
-        let mut gw_mac: Array<_, MacAddr> = Array::try_from(ebpf.map_mut("GW_MAC").unwrap())?;
-        gw_mac.set(0, MacAddr { addr: upfedge0_mac }, 0)?;
-        gw_mac.set(1, MacAddr { addr: gnb_mac_addr }, 0)?;
+    let n6_redirect_ifindex: u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", ue_deliver_iface))?.trim().parse()?;
 
-        println!("GW_MAC[0] upfedge0={:02x?}", upfedge0_mac);
-        println!("GW_MAC[1] gNB={:02x?}", gnb_mac_addr);
-        //     // addr: [ 0x5a, 0x94, 0xef, 0xe4, 0x0c, 0xdd ],
-        //     addr: [0x52, 0x55, 0x55, 0x2e, 0xff, 0xc6],  // eth0 자신의 MAC
+    let n3_redirect_ifindex: u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", iface_n3))
+        .context("failed to read N3 ifindex")?
+        .trim()
+        .parse()
+        .context("failed to parse N3 ifindex")?;
 
-        // }, 0)?;
+    if_index.set(0, n3_redirect_ifindex, 0)?;
+    if_index.set(1, n6_redirect_ifindex, 0)?;
 
-        /*
-        let mut session_map: HashMap<_, SessionKey, SessionInfo> = 
-            HashMap::try_from(ebpf.map_mut("SESSION_MAP").unwrap())?;
-        
-        let key = SessionKey{
-            ue_ip: u32::from(Ipv4Addr::new(192, 168, 100, 100)).to_be(),
-        };
-
-        let info = SessionInfo{
-            teid: 3u32.to_be(),
-            gnb_ip: u32::from(Ipv4Addr::new(172, 22, 0, 23)).to_be(),
-            upf_ip: u32::from(Ipv4Addr::new(172, 22, 0, 8)).to_be(),
-        };
-
-        session_map.insert(key, info, 0)?;
-        println!("Session Inserted: UE=192.168.100.100 TEID=6 gNB=172.22.0.23");
-        */
-
-        let mut if_index: Array<_, u32> = Array::try_from(ebpf.map_mut("IF_INDEX").unwrap())?;
-
-        // let n6_ifindex:u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", opt.iface_n6))
-        //     .context("failed to read N6 ifindex")?
-        //     .trim()
-        //     .parse()
-        //     .context("failed to parse N6 ifindex")?;
-        let n6_redirect_ifindex: u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", ue_deliver_iface.clone()))?.trim().parse()?;
-
-        let n3_redirect_ifindex: u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", iface_n3))
-            .context("failed to read N3 ifindex")?
-            .trim()
-            .parse()
-            .context("failed to parse N3 ifindex")?;
-
-        if_index.set(0, n3_redirect_ifindex, 0)?;
-        if_index.set(1, n6_redirect_ifindex, 0)?;
-
-        // println!("IF_INDEX set: eth0=2, N6=({})", n6_redirect_ifindex);
-        println!("IF_INDEX[0] (N3, {})={}, IF_INDEX[1] (upfedge1)={}",
-            iface_n3, n3_redirect_ifindex, n6_redirect_ifindex);
-    }
+    println!("IF_INDEX[0] (N3, {})={}, IF_INDEX[1] ({})={}",
+        iface_n3, n3_redirect_ifindex, ue_deliver_iface, n6_redirect_ifindex);
 
     let session_map: HashMap<_, SessionKey, SessionInfo> =
         HashMap::try_from(ebpf.take_map("SESSION_MAP").unwrap())?;
@@ -324,8 +280,6 @@ async fn main() -> anyhow::Result<()> {
     let far_map: HashMap<_, upf_edge_common::FarKey, upf_edge_common::FarValue> =
         HashMap::try_from(ebpf.take_map("FAR_MAP").unwrap())?;
     let far_map = Arc::new(Mutex::new(far_map));
-
-    // let Opt { n4_addr, n3_addr, tui, .. } = opt;
 
     // for N3 Interface
     let program_n3: &mut Xdp = ebpf.program_mut("upf_edge_n3").unwrap().try_into()?;
@@ -357,8 +311,6 @@ async fn main() -> anyhow::Result<()> {
     if tui {
         let (tx_tui, rx_tui) = tokio::sync::mpsc::channel(100);
 
-        let tx_sync = tx_tui.clone();
-
         // env_logger 대신 TuiLogger 등록
         log::set_boxed_logger(Box::new(TuiLogger {
             tx: tx_tui.clone()  // ← 여기서 문제 — try_send 필요
@@ -376,28 +328,19 @@ async fn main() -> anyhow::Result<()> {
         tui::runner::run(rx_tui).await?;
     }
     else {
-        /// Not Tui
-        // env_logger::init();
-
+        // Not Tui
         tokio::spawn(async move {
             if let Err(e) = pfcp_server::run(pfcp, pfcp_map, pdr_map.clone(), far_map.clone()).await {
                 log::error!("PFCP Server error: {}", e);
             }
         });
 
-        // println!("Waiting for Ctrl-C...");
-
-        // signal::ctrl_c().await?;
-        // println!("Exiting...");
+        let ctrl_c = signal::ctrl_c();
+        println!("Waiting for Ctrl-C...");
+        ctrl_c.await?;
+        println!("Exiting...");
     }
 
     println!("PFCP Server started on {}:8805", n4_addr);
-    // println!("Waiting for Ctrl-C...");
-
-    let ctrl_c = signal::ctrl_c();
-    println!("Waiting for Ctrl-C...");
-    ctrl_c.await?;
-    println!("Exiting...");
-
     Ok(())
 }

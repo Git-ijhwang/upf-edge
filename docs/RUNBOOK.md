@@ -175,10 +175,7 @@ Replace `<gNB_veth>` with the value from above (e.g. `veth9b909bb`):
 
 ```bash
 sudo RUST_LOG=info ./target/release/upf-edge \
-  --iface-n3 <gNB_veth> \
-  --iface-n6 upfedge0 \
-  --n4-addr 172.22.0.8 \
-  --n3-addr 172.22.0.8
+  --iface-n3 <gNB_veth>
 ```
 
 Expected boot log:

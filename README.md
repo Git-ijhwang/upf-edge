@@ -224,10 +224,7 @@ done
 cd ~/upf-edge
 cargo build --release
 sudo RUST_LOG=info ./target/release/upf-edge \
-  --iface-n3 <gNB_veth_from_above> \
-  --iface-n6 upfedge0 \
-  --n4-addr 172.22.0.8 \
-  --n3-addr 172.22.0.8
+  --iface-n3 <gNB_veth_from_above> 
 
 # Terminal A: attach the UE
 docker compose -f nr-ue.yaml up -d && sleep 15
@@ -435,11 +432,7 @@ sudo ip addr add 172.22.0.50/24 dev br-b9f9cfe60aba
 ```bash
 # Terminal B: start upf-edge (any veth is fine for --iface-n3
 # since smf-sim doesn't generate GTP-U traffic)
-sudo RUST_LOG=info ./target/release/upf-edge \
-  --iface-n3 upfedge1 \
-  --iface-n6 upfedge0 \
-  --n4-addr 172.22.0.8 \
-  --n3-addr 172.22.0.8
+sudo RUST_LOG=info ./target/release/upf-edge 
 
 # Terminal C: run scenario 1
 ./target/release/smf-sim \

@@ -108,33 +108,7 @@ and `ping 8.8.8.8` works end-to-end through the eBPF data plane.
 core (AMF, SMF, AUSF, UDM, NRF, PCF, etc.) and the simulated RAN (UERANSIM gNB
 and UE) remain untouched.
 
-```mermaid
-flowchart LR
-    subgraph RAN["RAN (UERANSIM)"]
-        UE["UE<br/>(uesimtun0)"]
-        gNB["gNB<br/>172.22.0.23"]
-    end
-
-    subgraph Core["5G Core (Open5GS)"]
-        AMF["AMF<br/>172.22.0.10"]
-        SMF["SMF<br/>172.22.0.7"]
-        OTHER["NRF · AUSF · UDM<br/>PCF · UDR · NSSF · SCP"]
-    end
-
-    subgraph UPF["upf-edge (this project)"]
-        US["Userspace (Rust)<br/>PFCP parser · session FSM<br/>eBPF map updater"]
-        XDP["Kernel XDP<br/>GTP-U decap/encap<br/>bpf_redirect"]
-        US -.->|maps| XDP
-    end
-
-    INTERNET["Internet<br/>(8.8.8.8)"]
-
-    UE <-->|NAS / NR radio| gNB
-    gNB <-->|N3: GTP-U| XDP
-    SMF <-->|N4: PFCP| US
-    AMF <--> SMF
-    XDP <-->|N6: plain IP| INTERNET
-```
+![Architecture](docs/media/Architecture.png)
 
 Interfaces handled:
 

@@ -18,6 +18,8 @@ n6_iface = "upfedge0"
 # Priority: CLI args > this config file > built-in defaults
 n3_addr = "172.22.0.8"
 
+ue_deliver_iface = "upfedge1"
+
 [pfcp]
 # Self IP for N4 (PFCP)
 # Override: --n4-addr

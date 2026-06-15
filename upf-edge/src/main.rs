@@ -187,11 +187,17 @@ async fn main() -> anyhow::Result<()> {
         config.interfaces.n3_iface.as_deref());
     let iface_n6 = override_with_config(&opt.iface_n6, "eth1",
         config.interfaces.n6_iface.as_deref());
+    let ue_deliver_iface = config.interfaces.ue_deliver_iface
+        .clone()
+        .unwrap_or_else(|| "upfedge1".to_string());
+
     let n4_addr = override_ipv4_with_config(opt.n4_addr, "0.0.0.0".parse().unwrap(),
         config.pfcp.n4_addr.as_deref())?;
     let n3_addr = override_ipv4_with_config(opt.n3_addr, "127.22.0.8".parse().unwrap(),
         config.interfaces.n3_addr.as_deref())?;
     let tui = opt.tui;
+
+    handle_msg::set_ue_deliver_iface(ue_deliver_iface.clone());
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
     // new memcg based accounting, see https://lwn.net/Articles/837122/
@@ -290,11 +296,7 @@ async fn main() -> anyhow::Result<()> {
         //     .trim()
         //     .parse()
         //     .context("failed to parse N6 ifindex")?;
-        let n6_redirect_ifindex: u32 = std::fs::read_to_string("/sys/class/net/upfedge1/ifindex")
-            .context("failed to read upfedge1 ifindex")?
-            .trim()
-            .parse()
-            .context("failed to parse upfedge1 ifindex")?;
+        let n6_redirect_ifindex: u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", ue_deliver_iface.clone()))?.trim().parse()?;
 
         let n3_redirect_ifindex: u32 = std::fs::read_to_string(format!("/sys/class/net/{}/ifindex", iface_n3))
             .context("failed to read N3 ifindex")?

@@ -1,11 +1,18 @@
 use std::net::{Ipv4Addr, SocketAddr };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::process::Command;
 use tokio::net::UdpSocket;
 use tokio::time::{Duration};
 
 use aya::maps::HashMap;
-use upf_edge_common::{FarKey, FarValue, MAX_PDR_PER_SESSION, PdrKey, PdrValue, SessionInfo, SessionKey};
+use upf_edge_common::{
+    FarKey,
+    FarValue,
+    MAX_PDR_PER_SESSION,
+    PdrKey,
+    PdrValue,
+    SessionInfo,
+    SessionKey};
 
 use pfcp_common::header::PfcpHeader;
 use pfcp_common::builder;
@@ -15,25 +22,39 @@ use pfcp_common::types::*;
 
 use crate::pfcp_server::{SessionData, PfcpServer};
 
+
+static UE_DELIVER_IFACE: OnceLock<String> = OnceLock::new();
+
+pub fn set_ue_deliver_iface(iface: String) 
+{
+    let _ = UE_DELIVER_IFACE.set(iface);
+}
+
+fn deliver_iface() -> &'static str
+{
+    UE_DELIVER_IFACE.get().map(String::as_str).unwrap_or("upfedge1")
+}
+
 // Route add for UE and neighbor entry adding
 fn setup_ue_route(ue_ip: std::net::Ipv4Addr)
     -> anyhow::Result<()>
 {
-    let mac = std::fs::read_to_string("/sys/class/net/upfedge1/address")?
+    let iface = deliver_iface();
+    let mac = std::fs::read_to_string(format!("/sys/class/net/{}/address", iface))?
         .trim().to_string();
     let ue_ip_str = ue_ip.to_string();
 
     let cidr = format!("{}/32", ue_ip_str);
 
     let r1 = Command::new("ip")
-        .args(["route", "replace", &cidr, "dev", "upfedge1"])
+        .args(["route", "replace", &cidr, "dev", iface])
         .status()?;
     let r2 = Command::new("ip")
-        .args(["neigh", "replace", &ue_ip_str, "lladdr", &mac, "dev", "upfedge1"])
+        .args(["neigh", "replace", &ue_ip_str, "lladdr", &mac, "dev", iface, "nud", "permanent"])
         .status()?;
 
     if r1.success() && r2.success() {
-        log::info!("  UE route/neigh installed: {} -> upfedge1", ue_ip_str);
+        log::info!("  UE route/neigh installed: {} -> {}", ue_ip_str, iface);
         Ok(())
     }
     else {
@@ -44,11 +65,13 @@ fn setup_ue_route(ue_ip: std::net::Ipv4Addr)
 // UE Route and Neighbor entry deletion
 fn teardown_ue_route(ue_ip: std::net::Ipv4Addr)
 {
+    let iface = deliver_iface();
+
     let cidr = format!("{}/32", ue_ip);
     let ue_ip_s = ue_ip.to_string();
 
-    let _ = Command::new("ip").args(["route", "del", &cidr]).status();
-    let _ = Command::new("ip").args(["neigh", "del", &ue_ip_s, "dev", "upfedge1"]).status();
+    let _ = Command::new("ip").args(["route", "del", &cidr, "dev", iface]).status();
+    let _ = Command::new("ip").args(["neigh", "del", &ue_ip_s, "dev", iface]).status();
     log::info!("  UE route/neigh removed: {}", ue_ip);
 }
 

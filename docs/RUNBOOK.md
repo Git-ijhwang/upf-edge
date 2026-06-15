@@ -98,6 +98,65 @@ Open5GS SMF: `docker compose -f sa-deploy.yaml start smf`.
 
 ---
 
+# RUNBOOK.md — Scenario 5 (new)
+
+Add this scenario between Scenario 4 and "Shared helpers".
+
+---
+
+## Scenario 5 — Config change (no rebuild)
+
+Use after editing `upf-edge/configs/upf-edge-default.toml`. No code change,
+no rebuild — just kick upf-edge to pick up the new file.
+
+| # | Terminal | Command | Purpose |
+|---|---|---|---|
+| 1 | B | `sudo pkill -9 -f upf-edge` | Stop the running process |
+| 2 | B | See "Start upf-edge" | Restart (auto-discovers new config) |
+| 3 | A | `docker compose -f nr-ue.yaml down && sleep 3 && docker compose -f nr-ue.yaml up -d && sleep 15` | UE re-attach to pick up new session |
+| 4 | A | `docker exec nr_ue ping -I uesimtun0 8.8.8.8 -c 5` | Verify the new config still routes traffic |
+
+The config file is loaded at boot only — there is no SIGHUP reload. The
+PFCP session table is not affected by a config change, but UE sessions
+must be re-established because the upf-edge process dropped the eBPF
+maps with it.
+
+---
+
+## Generic Linux deployment
+
+When deploying on a host that is **not** the Lima VM (no `docker_open5gs`
+network, no `nr_gnb` container), use a config like:
+
+```toml
+# /etc/upf-edge/upf-edge.toml — generic Linux deployment
+
+[interfaces]
+n3_iface = "eth0"          # whatever NIC faces the gNB
+n6_iface = "eth1"          # whatever NIC faces the data network
+n3_addr = "10.0.0.5"
+ue_deliver_iface = "eth1"
+
+[pfcp]
+n4_addr = "10.0.0.5"
+n4_port = 8805
+
+[peers]
+gnb_addr = "10.0.0.10"     # ARP-learned at boot
+
+[redis]
+url = "redis://127.0.0.1/"
+```
+
+Start with an explicit config path:
+
+```bash
+sudo ./target/release/upf-edge --config /etc/upf-edge/upf-edge.toml
+```
+
+No CLI args required — the config supplies all interfaces and addresses.
+
+
 ## Shared helpers
 
 ### Find gNB veth (run this every restart — the name changes)

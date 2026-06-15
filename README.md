@@ -24,6 +24,7 @@ Open5GS SMF.
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
 - [Detailed setup](#detailed-setup)
+- [Configuration](#configuration)
 - [Testing with smf-sim](#testing-with-smf-sim)
 - [Project structure](#project-structure)
 - [eBPF maps](#ebpf-maps)
@@ -155,6 +156,9 @@ showed up between "encap function gets called" and "ping reply arrives at UE".
 | PFCP Session Modification (gnb_ip/teid update) | ✅ |
 | PFCP Session Deletion | ✅ |
 | `bpf_redirect` on both directions | ✅ |
+| TOML config with CLI override | ✅ |
+| Generic Linux deployment (no docker dependency) | ✅ |
+| smf-sim PFCP simulator (Scenario 1: full lifecycle) | ✅ |
 | Dynamic MAC learning (no hardcoded values) | ✅ |
 | Dynamic ifindex from CLI args | ✅ |
 | UE route / neighbor auto-install on Session Establishment | ✅ |
@@ -271,6 +275,119 @@ Scenarios (full list in [`RUNBOOK.md`](docs/RUNBOOK.md)):
 
 ---
 
+## Configuration
+
+`upf-edge` reads its configuration from a TOML file plus CLI arguments.
+The precedence order is **CLI args > config file > built-in defaults**, so
+any value can be overridden at runtime without editing the file.
+
+### Default config location
+
+When `--config <path>` is omitted, upf-edge auto-discovers
+`upf-edge/configs/upf-edge-default.toml` (relative to the workspace root).
+If the file is missing, defaults take over and a log line says so.
+
+### Full example (Lima VM environment)
+
+```toml
+# upf-edge/configs/upf-edge-default.toml
+
+[interfaces]
+# Override --iface-n3; gNB-facing interface (GTP-U)
+n3_iface = "upfedge1"
+
+# Override --iface-n6; data-network-facing interface
+n6_iface = "upfedge0"
+
+# Self IP for N3 (GTP-U source); override --n3-addr
+n3_addr = "172.22.0.8"
+
+# Interface that delivers downlink replies to UEs.
+# Used by setup_ue_route / teardown_ue_route in handle_msg.rs.
+# Defaults to "upfedge1" if omitted.
+ue_deliver_iface = "upfedge1"
+
+[pfcp]
+# Self IP for N4 (PFCP); override --n4-addr
+n4_addr = "172.22.0.8"
+n4_port = 8805
+
+[peers]
+# Option A (static): set the gNB MAC directly. Fastest, but the MAC
+# may change across container restarts in dev environments.
+# gnb_mac = "ae:87:cb:d4:60:46"
+
+# Option B (dynamic): set the gNB IP and let upf-edge ARP-learn the MAC
+# at boot. Robust to container restarts, single boot-time round trip.
+gnb_addr = "172.22.0.23"
+
+# SMF IP (informational, not used to gate traffic)
+# smf_addr = "172.22.0.7"
+
+[redis]
+url = "redis://127.0.0.1/"
+enabled = true
+```
+
+### Field reference
+
+| Section | Field | Default | Notes |
+|---|---|---|---|
+| `interfaces` | `n3_iface` | `eth0` | gNB-side interface (XDP attached) |
+| `interfaces` | `n6_iface` | `eth1` | DN-side interface (XDP attached) |
+| `interfaces` | `n3_addr` | `127.22.0.8` | Self IP for N3 |
+| `interfaces` | `ue_deliver_iface` | `upfedge1` | Where downlink replies arrive |
+| `pfcp` | `n4_addr` | `0.0.0.0` | PFCP bind address |
+| `pfcp` | `n4_port` | `8805` | PFCP bind port |
+| `peers` | `gnb_mac` | (none) | If set, used directly |
+| `peers` | `gnb_addr` | (none) | Falls back to ARP if `gnb_mac` is missing |
+| `peers` | `smf_addr` | (none) | Informational |
+| `redis` | `url` | `redis://127.0.0.1/` | Session store backend |
+| `redis` | `enabled` | `true` | Disable to run without persistence |
+
+### gNB MAC learning
+
+upf-edge needs the gNB's MAC to redirect downlink frames on the N3
+interface. It is resolved at boot in this order:
+
+1. If `peers.gnb_mac` is set in the config, it is parsed and used directly.
+2. Otherwise, if `peers.gnb_addr` is set, upf-edge looks at the kernel ARP
+   cache (`ip neigh show <addr>`). If the entry is missing it sends one
+   ping (to trigger ARP), waits 500 ms, and re-reads the cache.
+3. If both are missing, boot fails with an explicit error.
+
+This removes the previous dependency on `docker exec nr_gnb ...` and lets
+the same binary boot on any Linux host that can reach the gNB on the wire.
+
+### Generic Linux deployment example
+
+For a non-Lima environment (e.g. bare metal with a real gNB at
+`10.42.0.10` reachable via `eth0`):
+
+```toml
+[interfaces]
+n3_iface = "eth0"
+n6_iface = "eth1"
+n3_addr = "10.42.0.5"
+ue_deliver_iface = "eth1"
+
+[pfcp]
+n4_addr = "10.42.0.5"
+n4_port = 8805
+
+[peers]
+gnb_addr = "10.42.0.10"   # ARP-learned at boot
+```
+
+Then start without CLI overrides:
+
+```bash
+sudo ./target/release/upf-edge
+```
+
+---
+
+
 ## Testing with smf-sim
 
 The `smf-sim` crate is a minimal PFCP SMF simulator that lets you exercise
@@ -385,10 +502,14 @@ smf-sim interactive                     # TUI (Ratatui-based, WIP)
 ```
 upf-edge/
 ├── upf-edge/              # Userspace (Rust + Tokio)
-│   ├── pfcp_server.rs       PFCP UDP listener
-│   ├── handle_msg.rs        Per-message-type handlers + UE route automation
-│   ├── session_store.rs     Redis persistence
-│   └── main.rs              CLI, eBPF loading, map population
+│   ├── src/
+│   │   ├── main.rs              CLI, eBPF loading, map population
+│   │   ├── config.rs            TOML config loader (serde + toml)
+│   │   ├── handle_msg.rs        Per-message-type handlers + UE route automation
+│   │   ├── session_store.rs     Redis persistence
+│   │   └── pfcp_server.rs       PFCP UDP listener
+|   └── configs/
+|       └── upf-edge-default.toml   # auto-discovered config
 │
 ├── upf-edge-ebpf/         # Kernel XDP programs
 │   └── main.rs              try_upf_edge (N3 decap), try_encap (N6 encap)
@@ -463,6 +584,9 @@ flowchart LR
 | Uplink works, downlink ping timeouts | `iptables FORWARD` rejecting reverse path | Verify the `-d 192.168.100.0/24 -j ACCEPT` rule |
 | `Encapsulated:` logs but no packet at gNB | wrong dst MAC | Confirm `GW_MAC[1]` matches `docker exec nr_gnb cat /sys/class/net/eth0/address` |
 | PFCP "F-SEID missing" in Session Modification | dict still has it as Mandatory | Already fixed; ensure you're on the latest commit |
+| Boot fails with "gNB MAC unknown" | Add `peers.gnb_mac` (static) or `peers.gnb_addr` (ARP) to the config |
+| Boot fails with "ARP learn failed for &lt;ip&gt;" | Verify `peers.gnb_addr` is reachable: `ping <ip>`, check `ip route` and bridge alias |
+| `Loaded config from ...` not in logs | Run from the workspace root: `cd ~/upf-edge && sudo ./target/release/upf-edge`. The default config is looked up at `upf-edge/configs/upf-edge-default.toml` relative to CWD |
 
 When in doubt, this is the bisection order:
 

@@ -158,7 +158,6 @@ showed up between "encap function gets called" and "ping reply arrives at UE".
 | Dynamic ifindex from CLI args | ✅ |
 | UE route / neighbor auto-install on Session Establishment | ✅ |
 | Session persistence in Redis (restart recovery) | ✅ |
-| smf-sim PFCP simulator (Scenario 1: full lifecycle) | ✅ |
 | smf-sim Scenarios 2–3 (multi-UE, load) | 🔴 planned |
 | Ratatui TUI (operational view) | 🟡 partial |
 | Prometheus metrics | 🔴 planned |
@@ -523,8 +522,10 @@ upf-edge/
 
 ## eBPF maps
 
-Userspace populates these on startup and on every PFCP event. The XDP programs
-do read-only lookups during packet processing.
+eBPF maps are the shared-memory bridge between the userspace control
+plane and the in-kernel XDP fast path. Userspace writes session state
+into them (typically from PFCP message handlers); XDP reads them on
+every packet to make forwarding decisions.
 
 ![eBPF map](docs/media/eBPF%20Map.png)
 
@@ -540,9 +541,9 @@ do read-only lookups during packet processing.
 | Uplink works, downlink ping timeouts | `iptables FORWARD` rejecting reverse path | Verify the `-d 192.168.100.0/24 -j ACCEPT` rule |
 | `Encapsulated:` logs but no packet at gNB | wrong dst MAC | Confirm `GW_MAC[1]` matches `docker exec nr_gnb cat /sys/class/net/eth0/address` |
 | PFCP "F-SEID missing" in Session Modification | dict still has it as Mandatory | Already fixed; ensure you're on the latest commit |
-| Boot fails with "gNB MAC unknown" | Add `peers.gnb_mac` (static) or `peers.gnb_addr` (ARP) to the config |
-| Boot fails with "ARP learn failed for &lt;ip&gt;" | Verify `peers.gnb_addr` is reachable: `ping <ip>`, check `ip route` and bridge alias |
-| `Loaded config from ...` not in logs | Run from the workspace root: `cd ~/upf-edge && sudo ./target/release/upf-edge`. The default config is looked up at `upf-edge/configs/upf-edge-default.toml` relative to CWD |
+| Boot fails with "gNB MAC unknown" | No `gnb_mac` / `gnb_addr` in config | Add `peers.gnb_mac` (static) or `peers.gnb_addr` (ARP) |
+| Boot fails with "ARP learn failed for &lt;ip&gt;" | gNB unreachable from upf-edge host | Verify with `ping <ip>`; check `ip route` and bridge alias |
+| `Loaded config from ...` not in logs | Running from wrong working directory | Run from workspace root: `cd ~/upf-edge && sudo ./target/release/upf-edge` |
 
 When in doubt, this is the bisection order:
 
@@ -566,10 +567,12 @@ sudo tcpdump -i any -n "udp port 8805" -c 10
 
 ## Roadmap
 
-- **Phase 2.5**: round out smf-sim — scenarios 2–6 (multi-UE, error handling, load) and CI integration
-- **Phase 3**: performance benchmarking (TRex) vs Open5GS UPF, target ≥ 2× pps
-- **Phase 4**: Ratatui TUI completion, Prometheus exporter, Grafana dashboard
-- **Phase 5**: IPv6 support, multi-UE QoS, write-up + demo video
+- **Phase 2**: consume `PDR_MAP` / `FAR_MAP` from the XDP fast path —
+  multi-PDR-per-session matching with FAR-based forwarding actions
+  round out smf-sim — scenarios 2–6 (multi-UE, error handling, load) and CI integration
+- **Phase 3**: Ratatui TUI completion, Prometheus exporter, Grafana dashboard
+- **Phase 4**: multi-UE QoS, write-up
+- **Phase 5**: performance benchmarking (TRex) vs Open5GS UPF, target ≥ 2× pps
 
 See [PFCP_NOTES.md](docs/PFCP_NOTES.md) for an engineering deep-dive on the
 subtler bugs found during Phase 2 — particularly the Session Modification

@@ -439,11 +439,53 @@ fn handle_session_deletion( header: &PfcpHeader,
             let key = SessionKey {
                 ue_ip: u32::from(data.ue_ip).to_be(),
             };
+
+            let (pdr_ids, pdr_count) = {
+                let mut map = session_map.lock().unwrap();
+                match map.get(&key, 0) {
+                    Ok(info) => (info.pdr_ids, info.pdr_count as usize),
+                    Err(_) => ([0u32; upf_edge_common::MAX_PDR_PER_SESSION], 0usize),
+                }
+            };
+            let pdr_count = pdr_count.min(upf_edge_common::MAX_PDR_PER_SESSION);
+
+            let mut far_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
+            {
+                let mut map = pdr_map.lock().unwrap();
+                for i in 0..pdr_count {
+                    let pdr_id = pdr_ids[i];
+                    if let Ok(pv) = map.get(&PdrKey { pdr_id }, 0){
+                        far_ids.insert(pv.far_id);
+                    }
+                }
+            }
+
+            // 3. PDR remove from PDR_MAP
+            {
+                let mut map = pdr_map.lock().unwrap();
+                for i in 0..pdr_count {
+                    let pdr_id = pdr_ids[i];
+                    let _ = map.remove(&PdrKey { pdr_id });
+                }
+            }
+
+            // 4. FAR remove from PDR_MAP
+            {
+                let mut map = far_map.lock().unwrap();
+                for &far_id in & far_ids {
+                    let _ = map.remove(&FarKey { far_id });
+                }
+            }
+
+            // 5. Remove session from Session Map
             {
                 let mut map = session_map.lock().unwrap();
-                map.remove(&key);
+                let _ = map.remove(&key);
             }
-            log::info!("  eBPF map: removed UE={}", data.ue_ip);
+
+            log::info!("  eBPF map removed: UE={}, PDRx{}, FARx{}",
+                data.ue_ip, pdr_count, far_ids.len());
 
             teardown_ue_route(data.ue_ip);
         }

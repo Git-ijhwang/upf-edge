@@ -356,6 +356,7 @@ fn handle_session_modification(header: &PfcpHeader,
     let new_ohc = update_fars.iter()
         .find_map(|far| far.outer_header_creation.as_ref());
 
+        /*
     if let Some(ohc) = new_ohc {
         let new_gnb_ip = ohc.peer_addr;
         let new_teid = ohc.teid;
@@ -405,6 +406,62 @@ fn handle_session_modification(header: &PfcpHeader,
             sess.gnb_ip = new_gnb_ip;
             sess.teid = new_teid;
         }
+    }
+    */
+    let session_key = SessionKey{
+        ue_ip: u32::from(ue_ip).to_be(),
+    };
+
+    let mut modified_any  = false;
+
+    for far in &update_fars {
+        let Some(ohc) = &far.outer_header_creation else {
+            continue;
+        };
+
+        let new_gnb_ip = ohc.peer_addr;
+        let new_teid = ohc.teid;
+        modified_any = true;
+
+        log::info!("  Session Modification: SEID:{}, FAR:{}, newgNB:{}, new TEID={:#x}",
+            local_seid, far.far_id, new_gnb_ip, new_teid);
+
+        {
+            let far_key = FarKey { far_id: far.far_id };
+            let mut map = far_map.lock().unwrap();
+            if let Ok(mut fv) = map.get(&far_key, 0) {
+                fv.gnb_ip = u32::from(new_gnb_ip).to_be();
+                fv.teid = new_teid.to_be();
+                map.insert(far_key, fv, 0)?;
+
+                log::info!("  eBPF FAR_MAP updated: FAR:{} -> gNB:{}, TEID:{:#x}",
+                    far.far_id, new_gnb_ip, new_teid);
+            }
+            else {
+                log::warn!("  FAR not found in eBPF map for FAR ID={}", far.far_id);
+            }
+        }
+
+        if far.dest_interface == Some(upf_edge_common::IFACE_ACCESS) {
+            let mut map = session_map.lock().unwrap();
+            if let Ok(mut info) = map.get(&session_key, 0) {
+                info.gnb_ip = u32::from(new_gnb_ip).to_be();
+                info.teid = new_teid.to_be();
+                map.insert(session_key, info, 0)?;
+
+                log::info!("  eBPF SESSION_MAP updated: UE:{} -> TEID:{:#x}, gNB:{}",
+                    ue_ip, new_teid, new_gnb_ip);
+            }
+
+            if let Some(sess) = srv.sessions.get_mut(&local_seid) {
+                sess.gnb_ip = new_gnb_ip;
+                sess.teid = new_teid;
+            }
+        }
+    }
+
+    if !modified_any {
+        log::info!("  Session Modification SEID:{} - no OHC changes", local_seid);
     }
 
     Ok(

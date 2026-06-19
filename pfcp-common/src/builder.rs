@@ -127,7 +127,7 @@ impl MsgBuilder {
             val.extend_from_slice(&ohc.peer_addr.octets());
             Self::append_ie(&mut fwd, PFCP_IE_OUTER_HEADER_CREATION, &val);
         }
-        Self::append_ie(&mut inner, PFCP_IE_FORWARDING_PARAMETERS, &fwd);
+        Self::append_ie(&mut inner, PFCP_IE_UPDATE_FORWARDING_PARAMETERS, &fwd);
 
         self.add_ie(PFCP_IE_UPDATE_FAR, &inner);
     }

@@ -180,6 +180,46 @@ fn touch_activity(server: &Arc<Mutex<PfcpServer>>) {
 }
 
 
+async fn keepalive_task( server: Arc<Mutex<PfcpServer>>,
+                             socket: Arc<UdpSocket>)
+{
+    let mut keepalive_seq = 200u32;
+    let interval = std::time::Duration::from_secs(15);
+    let sleep_dur = {
+
+        let srv = server.lock().unwrap();
+        let elapsed = srv.last_activity.elapsed();
+
+        if elapsed >= interval {
+            drop(srv);
+            std::time::Duration::from_millis(1)
+        }
+        else {
+            drop(srv);
+            interval - elapsed
+        }
+    };
+
+    loop {
+        tokio::time::sleep(sleep_dur).await;
+
+        {
+            if let Some((req, peer)) = check_keepalive(&server, interval, &mut keepalive_seq) {
+                if let Err(e) = socket.send_to(&req, peer).await {
+                    log::error!("[keepalive] send error: {}", e);
+                } else {
+                    // let mut srv = server.lock().unwrap();
+                    // srv.last_activity = std::time::Instant::now();
+
+                    touch_activity(&server);
+                    // drop(srv);
+                }
+            }
+        }
+    }
+}
+
+
 ///PFCP Server
 pub async fn run ( server: Arc<Mutex<PfcpServer>>,
                    session_map: Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
@@ -220,23 +260,39 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
     }
 
     let mut buf = [0u8; 4096];
-    let interval = std::time::Duration::from_secs(15);
-    let mut keepalive_seq = 200u32;
 
     // let mut keepalive_spawned = false;
+    tokio::spawn(keepalive_task(server.clone(), socket.clone()));
+
     loop {
-        let sleep_dur = {
-            let srv = server.lock().unwrap();
-            let elapsed = srv.last_activity.elapsed();
-            if elapsed >= interval {
-            drop(srv);
-                std::time::Duration::from_millis(1)
+        let (n, src) = socket.recv_from(&mut buf).await?;
+
+        let packet = buf[..n].to_vec();
+
+        let socket = socket.clone();
+        let server = server.clone();
+        let session_map = session_map.clone();
+        let pdr_map = pdr_map.clone();
+        let far_map = far_map.clone();
+
+        tokio::spawn(async move {
+            touch_activity(&server);
+            match handle_message(&packet, &server, &session_map, &pdr_map, &far_map) {
+                Ok(response) => {
+                    if !response.is_empty() {
+                        if let Err(e) = socket.send_to(&response, src).await {
+                            log::error!("send error to {}: {}", src, e);
+                        }
+                    }
+                }
+
+                Err(e) => {
+                    log::error!("{}", e);
+                }
             }
-            else {
-            drop(srv);
-                interval - elapsed
-            }
-        };
+        });
+
+        /*
 
         tokio::select! {
             // Branch #1: PFCP Message Receive
@@ -292,5 +348,6 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
                 }
             }
         }
+        */
     }
 }

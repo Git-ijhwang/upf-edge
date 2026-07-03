@@ -11,6 +11,7 @@ The project interoperates with Open5GS and free5GC control planes over the N4 (P
 ---
 
 ## Architecture
+```
             ┌──────────────────────────────────────────┐
             │  SMF (from Open5GS / free5GC)            │
             └──────────────────────────────────────────┘
@@ -39,7 +40,7 @@ The project interoperates with Open5GS and free5GC control planes over the N4 (P
           ▲                              ▲
           │                              │
      N3 (gNB → UPF, GTP-U)         N6 (DN, plain IP)
-
+```
 ---
 
 ## What's implemented
@@ -100,6 +101,7 @@ The project interoperates with Open5GS and free5GC control planes over the N4 (P
 ---
 
 ## Project structure
+```
 upf-edge/
 ├── Cargo.toml                     # workspace root
 ├── upf-edge/                      # userspace (control plane)
@@ -122,6 +124,7 @@ upf-edge/
 │   ├── bootup.sh                  # environment setup (idempotent)
 │   └── shutdown.sh                # cleanup (upf-edge, XDP detach, veth, iptables)
 └── README.md
+```
 
 ---
 

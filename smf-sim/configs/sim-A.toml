@@ -1,0 +1,19 @@
+[network]
+smf_n4_addr = "172.22.0.50"
+smf_n4_port = 8805
+upf_n4_addr = "172.22.0.8"
+upf_n4_port = 8805
+gnb_addr = "172.22.0.23"
+gnb_gtpu_port = 2152
+
+[session]
+ue_ip_pool_start = "192.168.100.100"
+ue_ip_pool_end   = "192.168.100.150"
+gnb_teid_start   = 0x80000001
+max_sessions     = 100
+
+[timing]
+heartbeat_interval_sec    = 15
+response_timeout_ms       = 5000
+session_creation_interval_ms = 10
+max_retries               = 3

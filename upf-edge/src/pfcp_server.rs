@@ -36,7 +36,9 @@ pub struct PfcpServer {
     pub recovery_ts: u32,
 
     /// PFCP Association Status
-    pub associated: bool,
+    // pub associated: bool,
+
+    pub associations: std::collections::HashMap<Ipv4Addr, crate::association::SmfAssociation>,
 
     /// Next SEID
     pub next_seid: u64,
@@ -59,8 +61,7 @@ pub struct PfcpServer {
     pub tx_tui: Option<tokio::sync::mpsc::Sender<crate::tui::app::AppEvent>>,
 
     pub session_store: Option<std::sync::Arc<crate::session_store::SessionStore>>,
-
-    pub smf_recovery_ts: Option<u32>,
+    // pub smf_recovery_ts: Option<u32>,
 }
 
 
@@ -78,7 +79,8 @@ impl PfcpServer
             n4_addr,
             n3_addr,
             recovery_ts: unix_now.wrapping_add(2_208_980_800),
-            associated: false,
+            // associated: false,
+            associations: std::collections::HashMap::new(),
             next_seid: 1,
             next_teid: 1000,
             sessions: std::collections::HashMap::new(),
@@ -86,7 +88,7 @@ impl PfcpServer
             last_activity: std::time::Instant::now(),
             tx_tui: None,
             session_store: None,
-            smf_recovery_ts: None,
+            // smf_recovery_ts: None,
         }
     }
 
@@ -140,6 +142,36 @@ impl PfcpServer
             let _ = tx.try_send(event);
         }
     }
+
+    /// Node ID로 association 조회 (Step 1 — 향후 step에서 사용)
+    #[allow(dead_code)]
+    pub fn get_association(&self, node_id: &std::net::Ipv4Addr) 
+        -> Option<&crate::association::SmfAssociation> 
+    {
+        self.associations.get(node_id)
+    }
+
+    #[allow(dead_code)]
+    pub fn get_association_mut(&mut self, node_id: &std::net::Ipv4Addr) 
+        -> Option<&mut crate::association::SmfAssociation> 
+    {
+        self.associations.get_mut(node_id)
+    }
+
+    // #[allow(dead_code)]
+    // pub fn find_association_by_addr(&self, addr: &SockAddr) -> Option<&SmfAssociation> {
+    //     self.associations.values().find(|a| a.peer_addr == *addr)
+    // }
+
+    // #[allow(dead_code)]
+    // pub fn get_association_by_addr(&self, node_id: &Ipv4Addr) -> Option<&SmfAssociation> {
+    //     self.associations.get(node_id)
+    // }
+
+    // #[allow(dead_code)]
+    // pub fn get_association_by_addr(&mut self, node_id: &Ipv4Addr) -> Option<&mut SmfAssociation> {
+    //     self.associations.get_mut(node_id)
+    // }
 }
 
 
@@ -265,6 +297,7 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
     tokio::spawn(keepalive_task(server.clone(), socket.clone()));
 
     loop {
+
         let (n, src) = socket.recv_from(&mut buf).await?;
 
         let packet = buf[..n].to_vec();
@@ -277,7 +310,7 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
 
         tokio::spawn(async move {
             touch_activity(&server);
-            match handle_message(&packet, &server, &session_map, &pdr_map, &far_map) {
+            match handle_message(&packet, src, &server, &session_map, &pdr_map, &far_map) {
                 Ok(response) => {
                     if !response.is_empty() {
                         if let Err(e) = socket.send_to(&response, src).await {

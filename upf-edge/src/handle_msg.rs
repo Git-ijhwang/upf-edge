@@ -15,7 +15,7 @@ use upf_edge_common::{
     SessionKey};
 
 use pfcp_common::header::PfcpHeader;
-use pfcp_common::builder;
+use pfcp_common::builder;//::{self, build_association_setup_response};
 use pfcp_common::dict_ext;
 use pfcp_common::ie;
 use pfcp_common::types::*;
@@ -99,6 +99,7 @@ fn decode_header<'a> (data: &'a[u8]) -> anyhow::Result<(PfcpHeader, &'a[u8])>
 
 fn handle_heartbeat( header: &PfcpHeader,
                     body: &[u8],
+                    src: SocketAddr,
                     server: &Arc<Mutex<PfcpServer>>,)
     -> anyhow::Result<Vec<u8>>
 {
@@ -107,12 +108,13 @@ fn handle_heartbeat( header: &PfcpHeader,
 
     let mut srv = server.lock().unwrap();
     
+    /*
     match (srv.smf_recovery_ts, recv_ts) {
         (Some(stored), Some(recv)) if stored != recv => {
             log::warn!("  Detect SMF Re-starting. TS {}->{}", stored, recv);
             log::warn!("  Session Reset {} sessions", srv.sessions.len());
             srv.sessions.clear();
-            srv.associated = false;
+            // srv.associated = false;
             srv.smf_recovery_ts = Some(recv);
             srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(false));
             srv.tui_sessions_updated();
@@ -122,6 +124,36 @@ fn handle_heartbeat( header: &PfcpHeader,
         }
 
         _ => {}
+    }
+    */
+
+    if let std::net::IpAddr::V4(src_ip) = src.ip() {
+        let assoc_opt = srv.associations.values_mut().find(|a| a.peer_addr == src);
+        // let assoc_opt = srv.associations.values_mut().find(|a| a.peer_addr.ip() == std::net::IpAddr::V4(src_ip));
+
+        match (assoc_opt, recv_ts) {
+            (Some(assoc), Some(recv)) => {
+                if assoc.recovery_ts != recv {
+                    log::warn!("[Association {}] SMF Re-starting detected. TS {} -> {}. \
+                        {} sessions in this association will be cleared.",
+                         assoc.node_id, assoc.recovery_ts, recv, assoc.sessions.len()
+                    );
+                    assoc.sessions.clear();
+                    assoc.recovery_ts = recv;
+                }
+
+                assoc.last_activity = std::time::Instant::now();
+                assoc.heartbeat.last_response = Some(std::time::Instant::now());
+                assoc.heartbeat.consecutive_failures = 0;
+            }
+
+            (None, _) => {
+                log::warn!("[Heartbeat] From unknown source{}, no association matched. \
+                    Total associations: {}", src, srv.associations.len());
+            }
+
+            _ => {}
+        }
     }
 
     log::info!("-> Heartbeat Response (seq={}) ", header.seq_num);
@@ -133,19 +165,48 @@ fn handle_heartbeat( header: &PfcpHeader,
 }
 
 
-fn handle_session_association(header: &PfcpHeader,
+fn handle_session_association ( header: &PfcpHeader,
                                 body: &[u8],
+                                src: SocketAddr,
                                 server: &Arc<Mutex<PfcpServer>>,
                                 session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,)
+                                // peer_socket_addr: SockAddr,)
     -> anyhow::Result<Vec<u8>>
 {
     let req = pfcp_common::messages::AssociationSetupReq::decode(body)?;
     let peer_addr = Some(req.node_id);
-    let smf_ts = Some(req.recovery_ts);
+
+    let smf_node_id = req.node_id;
+    let recovery_ts= req.recovery_ts;
 
     let mut srv  = server.lock().unwrap();
-    srv.associated = true; //Update the associated status
-    srv.smf_recovery_ts = smf_ts;
+
+    if let Some(existing) = srv.associations.get(&smf_node_id) {
+        if recovery_ts > existing.recovery_ts {
+            log::warn!("[Association] SMF {} restarted (Recovery TS {} -> {}). {} sessions will be replaced.",
+                smf_node_id, existing.recovery_ts, recovery_ts, existing.sessions.len()
+            );
+        }
+        else if recovery_ts == existing.recovery_ts {
+            log::info!("[Association] Duplicate setup from {} (same Recovery TS). Returning success.", smf_node_id);
+            let n3_addr = srv.n3_addr;
+            let recovery_ts = srv.recovery_ts;
+            return Ok(builder::build_association_setup_response(header.seq_num, n3_addr, recovery_ts));
+        }
+        else {
+            log::warn!("[Association] {} sent older Recovery TS ({} < {}). Rejecting.",
+                smf_node_id, recovery_ts, existing.recovery_ts);
+            // return Ok(builder::build_association_setup_response_with_cause(
+            //     &srv, header.seq_num, Cause::RequestRejected));
+        }
+    }
+
+    let assoc = crate::association::SmfAssociation::new( smf_node_id, src, recovery_ts);
+
+    srv.associations.insert(smf_node_id, assoc);
+
+    log::info!("[Association] New Association: {} ({})",
+        smf_node_id, srv.associations.len());
 
     srv.tui_log("✅ UPF Association Established");
     srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(true));
@@ -171,6 +232,7 @@ fn handle_session_association(header: &PfcpHeader,
 /// Session Establish 처리
 fn handle_session_establishment(header: &PfcpHeader,
                                 body: &[u8],
+                                src: SocketAddr,
                                 server: &Arc<Mutex<PfcpServer>>,
                                 session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
                                 pdr_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
@@ -184,6 +246,28 @@ fn handle_session_establishment(header: &PfcpHeader,
     let create_fars = req.create_fars;
 
     let mut srv = server.lock().unwrap();
+
+    let src_ip = match src.ip() {
+        std::net::IpAddr::V4(v4) => v4,
+        _ => {
+            log::warn!("[SessionEst] Non-IPv4 source: {}", src.ip());
+            anyhow::bail!("non-IPv4 srouce not supported");
+        }
+    };
+
+    let smf_node_id = {
+        let assoc_opt = srv.associations.values_mut().find(|a| a.peer_addr == src);
+        // let assoc_opt = srv.associations.values().find(|a| a.peer_addr.ip() == std::net::IpAddr::V4(src_ip));
+
+        match assoc_opt {
+            Some(assoc) => assoc.node_id,
+            None => {
+                log::warn!("[SessionEst] No association for source {}. Rejecting (Cause=72)", src);
+                anyhow::bail!("Session Establishment without Association from {}", src);
+            }
+        }
+    };
+
     let local_seid = srv.alloc_seid();
     let teid = srv.alloc_teid();
 
@@ -279,12 +363,20 @@ fn handle_session_establishment(header: &PfcpHeader,
         );
     }
 
-    srv.sessions.insert(local_seid, SessionData {
+    let session_data = SessionData {
         ue_ip,
         teid,
         gnb_ip: gnb_info.peer_addr,
         cp_seid
-    });
+    };
+
+    srv.sessions.insert(local_seid, session_data.clone());
+
+    if let Some(assoc) = srv.associations.get_mut(&smf_node_id) {
+        assoc.sessions.insert(cp_seid, session_data.clone());
+        log::info!("[Association {}] Session registered: cp_seid={}, local_seid={:#x}, Total sessions in this association: {}",
+            smf_node_id, cp_seid, local_seid, assoc.sessions.len());
+    }
 
     if let Some(store) = srv.session_store.clone() {
         let data = SessionData {
@@ -311,7 +403,6 @@ fn handle_session_establishment(header: &PfcpHeader,
         log::warn!("  Failed to setup UE route: {}", e);
     }
 
-
     let created_pdrs: Vec<(u16, u32, Ipv4Addr)> = create_pdrs.iter()
         .filter(|p| p.source_interface == INTERFACE_ACCESS)
         .map(|p| (p.pdr_id, teid, srv.n3_addr))
@@ -330,14 +421,13 @@ fn handle_session_establishment(header: &PfcpHeader,
 /// Session Modification 처리
 fn handle_session_modification(header: &PfcpHeader,
                                 body: &[u8],
+                                src: SocketAddr,
                                 server: &Arc<Mutex<PfcpServer>>,
                                 session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
                                 far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
     -> anyhow::Result<Vec<u8>>
 {
     let req = pfcp_common::messages::SessionModificationReq::decode(body)?;
-    // let cp_seid = req.cp_seid;
-    // let smf_addr = req.smf_addr;
     let update_fars = req.update_fars;
 
     let local_seid = header.seid
@@ -353,6 +443,37 @@ fn handle_session_modification(header: &PfcpHeader,
     let cp_seid = session_data.cp_seid;
     let n3_addr = srv.n3_addr;
 
+    let src_ip = match src.ip() {
+        std::net::IpAddr::V4(v4) => v4,
+        _ => {
+            log::warn!("[SessionMod] Non-IPv4 source: {}", src.ip());
+            anyhow::bail!("non-IPv4 source not supported");
+        }
+    };
+
+    let owning_node_id = {
+        let assoc_opt = srv.associations.values_mut().find(|a| a.peer_addr == src);
+        // let assoc_opt = srv.associations.values().find(|a| a.peer_addr.ip() == std::net::IpAddr::V4(src_ip));
+
+        match assoc_opt {
+            Some(assoc) => {
+                if !assoc.sessions.contains_key(&cp_seid) {
+                    log::warn!("[SessionMod] Ownership violation: source {} tries to modify session cp_seid={} which is not owned by association {}. Rejecting.", src, cp_seid, assoc.node_id);
+                    anyhow::bail!("Ownership violation: source {} tries to modify session cp_seid={} which is not owned by association {}", src, cp_seid, assoc.node_id);
+                }
+                assoc.node_id
+            }
+
+            None => {
+                log::warn!("[SessionMod] No association for source {}. Rejecting (Cause=72)", src);
+                anyhow::bail!("Session Modification without Association from {}", src);
+            }
+        }
+    };
+
+    log::info!("[Association {}] Session Modification: cp_seid={}, local_seid={:#x}, UE={}",
+        owning_node_id, cp_seid, local_seid, ue_ip);
+    
     let new_ohc = update_fars.iter()
         .find_map(|far| far.outer_header_creation.as_ref());
 
@@ -473,6 +594,7 @@ fn handle_session_modification(header: &PfcpHeader,
 /// Session Deletion 처리 — eBPF 맵에서 세션 제거
 fn handle_session_deletion( header: &PfcpHeader,
                             body: &[u8],
+                            src: SocketAddr,
                             server: &Arc<Mutex<PfcpServer>>,
                             session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
                             pdr_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
@@ -484,7 +606,69 @@ fn handle_session_deletion( header: &PfcpHeader,
     // 1. Search UE IP with SEID
     let (session_data, store) = {
         let mut svr = server.lock().unwrap();
+
+
+        // ── Q1 검증: cp_seid 획득 위해 먼저 lookup (remove 아님) ──
+        let existing = svr.sessions.get(&seid)
+            .ok_or_else(|| anyhow::anyhow!("Unknown SEID in Deletion: {}", seid))?;
+        let cp_seid = existing.cp_seid;
+
+        // source IP로 association 찾고 소유권 검증
+        let src_ip = match src.ip() {
+            std::net::IpAddr::V4(v4) => v4,
+            _ => {
+                log::warn!("[SessionDel] Non-IPv4 source: {}", src.ip());
+                anyhow::bail!("non-IPv4 source not supported");
+            }
+        };
+
+        let owning_node_id = {
+            let assoc_opt = svr.associations.values_mut().find(|a| a.peer_addr == src);
+            // let assoc_opt = svr.associations.values()
+            //     .find(|a| a.peer_addr.ip() == std::net::IpAddr::V4(src_ip));
+
+            match assoc_opt {
+                Some(assoc) => {
+                    if !assoc.sessions.contains_key(&cp_seid) {
+                        log::warn!(
+                            "[SessionDel] Ownership violation: source {} tries to delete \
+                             session cp_seid={} which is not owned by association {}",
+                            src, cp_seid, assoc.node_id
+                        );
+                        anyhow::bail!(
+                            "Session {} not owned by association from {}",
+                            cp_seid, src
+                        );
+                    }
+                    assoc.node_id
+                }
+                None => {
+                    log::warn!(
+                        "[SessionDel] No association for source {}. Rejecting.",
+                        src
+                    );
+                    anyhow::bail!(
+                        "Session Deletion without Association from {}",
+                        src
+                    );
+                }
+            }
+        };
+
+        log::info!(
+            "[Association {}] Deleting session: local_seid={}, cp_seid={}",
+            owning_node_id, seid, cp_seid
+        );
+
         let data = svr.sessions.remove(&seid);
+
+        if let Some(assoc) = svr.associations.get_mut(&owning_node_id) {
+            assoc.sessions.remove(&cp_seid);
+            log::info!(
+                "[Association {}] Session removed. Remaining sessions in this association: {}",
+                owning_node_id, assoc.sessions.len()
+            );
+        }
 
         svr.tui_sessions_updated();
         svr.tui_log(format!("🗑️ Session Deleted: SEID={:#x}", seid)); 
@@ -565,6 +749,7 @@ fn handle_session_deletion( header: &PfcpHeader,
 
 
 pub fn handle_message ( data: &[u8],
+                        src: SocketAddr,
                         server: &Arc<Mutex<PfcpServer>>,
                         session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
                         pdr_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
@@ -575,23 +760,23 @@ pub fn handle_message ( data: &[u8],
 
     match header.msg_type {
         PFCP_HEARTBEAT_REQ => {
-            handle_heartbeat(&header, body, server)
+            handle_heartbeat(&header, body, src, server)
         }
 
         PFCP_ASSOCIATION_SETUP_REQ => {
-            handle_session_association(&header, body, server, session_map)
+            handle_session_association(&header, body, src, server, session_map)
         }
 
         PFCP_SESSION_ESTABLISHMENT_REQ => {
-            handle_session_establishment(&header, body, server, session_map, pdr_map, far_map)
+            handle_session_establishment(&header, body, src, server, session_map, pdr_map, far_map)
         }
 
         PFCP_SESSION_MODIFICATION_REQ => {
-            handle_session_modification(&header, body, server, session_map, far_map)
+            handle_session_modification(&header, body, src, server, session_map, far_map)
         }
 
         PFCP_SESSION_DELETION_REQ => {
-            handle_session_deletion(&header, body, server, session_map, pdr_map, far_map)
+            handle_session_deletion(&header, body, src, server, session_map, pdr_map, far_map)
         }
 
         other => {

@@ -21,6 +21,7 @@ mod session_store;
 mod handle_msg;
 mod tui;
 mod config;
+mod association;
 
 #[derive(Debug, Parser)]
 struct Opt {

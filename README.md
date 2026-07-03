@@ -490,6 +490,12 @@ smf-sim interactive                     # TUI (Ratatui-based, WIP)
 upf-edge/
 ├── upf-edge/              # Userspace (Rust + Tokio)
 │   ├── src/
+│   │   ├── tui/
+│   │   │   ├── app.rs
+│   │   │   ├── command.rs
+│   │   │   ├── runner.rs
+│   │   │   ├── mod.rs
+│   │   │   └── pfcp_server.rs 
 │   │   ├── main.rs              CLI, eBPF loading, map population
 │   │   ├── config.rs            TOML config loader (serde + toml)
 │   │   ├── handle_msg.rs        Per-message-type handlers + UE route automation
@@ -499,7 +505,10 @@ upf-edge/
 │       └── upf-edge-default.toml   # auto-discovered config
 │
 ├── upf-edge-ebpf/         # Kernel XDP programs
-│   └── main.rs              try_upf_edge (N3 decap), try_encap (N6 encap)
+│   ├── src/
+│   │   ├── gtpu.rs
+│   │   └── main.rs        # try_upf_edge (N3 decap), try_encap (N6 encap)
+│   └── build.rs
 │
 ├── upf-edge-common/       # Types shared between userspace and kernel (no_std)
 │   └── SessionInfo, FarValue, PdrValue, MacAddr, ...
@@ -511,6 +520,8 @@ upf-edge/
 │   └── builder.rs           Outgoing message builders
 │
 └── smf-sim/               # PFCP SMF simulator (no Open5GS required)
+    ├── scenario/          # for Scenario test
+    │   └── basic_lifecycle.rs
     ├── main.rs              CLI: run / send / interactive
     ├── scenario/            Test scenarios (Scenario 1 implemented)
     ├── transport.rs         UDP transport with retries + timeouts

@@ -108,28 +108,8 @@ fn handle_heartbeat( header: &PfcpHeader,
 
     let mut srv = server.lock().unwrap();
     
-    /*
-    match (srv.smf_recovery_ts, recv_ts) {
-        (Some(stored), Some(recv)) if stored != recv => {
-            log::warn!("  Detect SMF Re-starting. TS {}->{}", stored, recv);
-            log::warn!("  Session Reset {} sessions", srv.sessions.len());
-            srv.sessions.clear();
-            // srv.associated = false;
-            srv.smf_recovery_ts = Some(recv);
-            srv.tui_send(crate::tui::app::AppEvent::AssociationChanged(false));
-            srv.tui_sessions_updated();
-        }
-        (None, Some(recv)) => {
-            srv.smf_recovery_ts = Some(recv);
-        }
-
-        _ => {}
-    }
-    */
-
     if let std::net::IpAddr::V4(src_ip) = src.ip() {
         let assoc_opt = srv.associations.values_mut().find(|a| a.peer_addr == src);
-        // let assoc_opt = srv.associations.values_mut().find(|a| a.peer_addr.ip() == std::net::IpAddr::V4(src_ip));
 
         match (assoc_opt, recv_ts) {
             (Some(assoc), Some(recv)) => {
@@ -170,7 +150,6 @@ fn handle_session_association ( header: &PfcpHeader,
                                 src: SocketAddr,
                                 server: &Arc<Mutex<PfcpServer>>,
                                 session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,)
-                                // peer_socket_addr: SockAddr,)
     -> anyhow::Result<Vec<u8>>
 {
     let req = pfcp_common::messages::AssociationSetupReq::decode(body)?;
@@ -257,7 +236,6 @@ fn handle_session_establishment(header: &PfcpHeader,
 
     let smf_node_id = {
         let assoc_opt = srv.associations.values_mut().find(|a| a.peer_addr == src);
-        // let assoc_opt = srv.associations.values().find(|a| a.peer_addr.ip() == std::net::IpAddr::V4(src_ip));
 
         match assoc_opt {
             Some(assoc) => assoc.node_id,
@@ -291,12 +269,9 @@ fn handle_session_establishment(header: &PfcpHeader,
     }
 
     let info = SessionInfo {
-        //Phase 1 Fields
         teid: teid.to_be(),
         gnb_ip: u32::from(gnb_info.peer_addr).to_be(),
         upf_ip: u32::from(srv.n3_addr).to_be(),
-
-        //Phase 2 Fields
         seid:      local_seid,
         pdr_ids,
         pdr_count: pdr_count as u8,
@@ -453,7 +428,6 @@ fn handle_session_modification(header: &PfcpHeader,
 
     let owning_node_id = {
         let assoc_opt = srv.associations.values_mut().find(|a| a.peer_addr == src);
-        // let assoc_opt = srv.associations.values().find(|a| a.peer_addr.ip() == std::net::IpAddr::V4(src_ip));
 
         match assoc_opt {
             Some(assoc) => {
@@ -477,58 +451,6 @@ fn handle_session_modification(header: &PfcpHeader,
     let new_ohc = update_fars.iter()
         .find_map(|far| far.outer_header_creation.as_ref());
 
-        /*
-    if let Some(ohc) = new_ohc {
-        let new_gnb_ip = ohc.peer_addr;
-        let new_teid = ohc.teid;
-
-        log::info!("  Session Modification: SEID={}, new_gNB={}, new TEID={:#x}",
-            local_seid, new_gnb_ip, new_teid);
-
-        // Update eBPF map
-        let key = SessionKey {
-            ue_ip: u32::from(ue_ip).to_be(),
-        };
-
-        {
-            let mut map = session_map.lock().unwrap();
-            if let Ok(mut info) = map.get(&key, 0) {
-                info.gnb_ip = u32::from(new_gnb_ip).to_be();
-                info.teid = new_teid.to_be();
-                map.insert(key, info, 0)?;
-                log::info!("  eBPF SESSION_MAP updated: UE={} → TEID={:#x}, gNB={}",
-                    ue_ip, new_teid, new_gnb_ip);
-            } else {
-                log::warn!("  Session not found in eBPF map for UE={}", ue_ip);
-            }
-        }
-
-        for far in &update_fars {
-            if far.outer_header_creation.is_none() {
-                continue;
-            }
-
-            let far_key = FarKey { far_id: far.far_id };
-            let mut map = far_map.lock().unwrap();
-            if let Ok(mut fv) = map.get(&far_key, 0) {
-                fv.gnb_ip = u32::from(new_gnb_ip).to_be();
-                fv.teid = new_teid.to_be();
-                map.insert(far_key, fv, 0)?;
-                log::debug!("  eBPF FAR_MAP updated: FAR {} → gNB={}, TEID={:#x}",
-                    far.far_id, new_gnb_ip, new_teid);
-            }
-            // else {
-            //     log::warn!("  FAR not found in eBPF map for FAR ID={}", far.far_id);
-            // }
-        }
-
-        // Update srv.session (for sync with Redis)
-        if let Some(sess) = srv.sessions.get_mut(&local_seid) {
-            sess.gnb_ip = new_gnb_ip;
-            sess.teid = new_teid;
-        }
-    }
-    */
     let session_key = SessionKey{
         ue_ip: u32::from(ue_ip).to_be(),
     };
@@ -624,8 +546,6 @@ fn handle_session_deletion( header: &PfcpHeader,
 
         let owning_node_id = {
             let assoc_opt = svr.associations.values_mut().find(|a| a.peer_addr == src);
-            // let assoc_opt = svr.associations.values()
-            //     .find(|a| a.peer_addr.ip() == std::net::IpAddr::V4(src_ip));
 
             match assoc_opt {
                 Some(assoc) => {

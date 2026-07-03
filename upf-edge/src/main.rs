@@ -242,7 +242,6 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-
     let upfedge0_mac = read_iface_mac("upfedge0").context("read upfedge0 MAC")?;
     let gnb_mac_addr = read_gnb_mac(
         config.peers.gnb_mac.as_deref(),
@@ -337,11 +336,8 @@ async fn main() -> anyhow::Result<()> {
         });
 
         let ctrl_c = signal::ctrl_c();
-        println!("Waiting for Ctrl-C...");
         ctrl_c.await?;
-        println!("Exiting...");
     }
 
-    println!("PFCP Server started on {}:8805", n4_addr);
     Ok(())
 }

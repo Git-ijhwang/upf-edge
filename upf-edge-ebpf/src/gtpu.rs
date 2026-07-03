@@ -64,27 +64,6 @@ pub struct UdpHdr {
 
 pub fn ip_checksum(hdr: &IpHdr) -> u16 
 {
-    /*
-    let raw = unsafe {
-        core::slice::from_raw_parts(
-            hdr as *const IpHdr as *const u16, 
-            core::mem::size_of::<IpHdr>() / 2)
-    };
-
-    let mut sum = 0u32;
-
-    for &word in raw {
-        sum += u16::from_be(word) as u32;
-    }
-
-    while sum >> 16 != 0 {
-        sum = (sum & 0xFFFF) + (sum >> 16);
-    }
-
-    (!(sum as u16).to_be())
-    */
-        // IP 헤더는 고정 20바이트 = 10개의 u16
-    // 루프 없이 수동으로 펼침 (verifier 통과용)
     let p = hdr as *const IpHdr as *const u16;
     let mut sum: u32 = 0;
 

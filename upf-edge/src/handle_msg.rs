@@ -14,6 +14,8 @@ use upf_edge_common::{
     SessionInfo,
     SessionKey};
 
+use ::metrics::gauge;
+
 use pfcp_common::header::PfcpHeader;
 use pfcp_common::builder;//::{self, build_association_setup_response};
 use pfcp_common::dict_ext;
@@ -370,6 +372,7 @@ fn handle_session_establishment(header: &PfcpHeader,
 
     srv.tui_sessions_updated();
     srv.tui_log(format!("✅ Session 추가: UE={} SEID={:#x}", ue_ip, local_seid));
+    ::metrics::gauge!("upf_pfcp_sessions_active").increment(1.0);
 
     log::info!("  Session created: seid={}, UE={}, TEID={:#x}", local_seid, ue_ip, teid);
     log::info!("  eBPF map: UE={} → TEID={}, gNB={}", ue_ip, teid, gnb_info.peer_addr);
@@ -592,6 +595,7 @@ fn handle_session_deletion( header: &PfcpHeader,
 
         svr.tui_sessions_updated();
         svr.tui_log(format!("🗑️ Session Deleted: SEID={:#x}", seid)); 
+        ::metrics::gauge!("upf_pfcp_sessions_active").decrement(1.0);
         (data, svr.session_store.clone())
     };
 
@@ -668,6 +672,23 @@ fn handle_session_deletion( header: &PfcpHeader,
 }
 
 
+fn msg_type_label(msg_type: u8) -> &'static str
+{
+    match msg_type {
+        PFCP_HEARTBEAT_REQ => "Heartbeat Request",
+        PFCP_HEARTBEAT_RSP => "Heartbeat Response",
+        PFCP_ASSOCIATION_SETUP_REQ => "Association Setup Request",
+        PFCP_ASSOCIATION_SETUP_RSP => "Association Setup Response",
+        PFCP_SESSION_ESTABLISHMENT_REQ => "Session Establishment Request",
+        PFCP_SESSION_ESTABLISHMENT_RSP => "Session Establishment Response",
+        PFCP_SESSION_MODIFICATION_REQ => "Session Modification Request",
+        PFCP_SESSION_MODIFICATION_RSP => "Session Modification Response",
+        PFCP_SESSION_DELETION_REQ => "Session Deletion Request",
+        PFCP_SESSION_DELETION_RSP => "Session Deletion Response",
+        _ => "Unknown"
+    }
+}
+
 pub fn handle_message ( data: &[u8],
                         src: SocketAddr,
                         server: &Arc<Mutex<PfcpServer>>,
@@ -677,8 +698,10 @@ pub fn handle_message ( data: &[u8],
     -> anyhow::Result<Vec<u8>>
 {
     let (header, body) = decode_header(data)?;
+    let msg_type = header.msg_type;
+    let start = std::time::Instant::now();
 
-    match header.msg_type {
+    let result = match msg_type {
         PFCP_HEARTBEAT_REQ => {
             handle_heartbeat(&header, body, src, server)
         }
@@ -706,8 +729,17 @@ pub fn handle_message ( data: &[u8],
             }
             else {
                 log::warn!("Unhandled PFCP message type: {}", other);
-                anyhow::bail!("unhandled type: {}", other);
+                // anyhow::bail!("unhandled type: {}", other);
+                Err(anyhow::anyhow!("unhandled type: {}", other))
+
             }
         }
-    }
+    };
+
+    ::metrics::histogram!(
+        "upf_pfcp_processing_seconds",
+        "message" => msg_type_label(msg_type)
+    ).record(start.elapsed().as_secs_f64());
+
+    result
 }

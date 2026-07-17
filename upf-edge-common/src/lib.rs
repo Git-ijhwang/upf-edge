@@ -132,3 +132,14 @@ pub struct MacAddr {
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for MacAddr {}
 
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct SessionStats {
+    pub rx_bytes: u64,
+    pub rx_packets: u64,
+    pub tx_bytes: u64,
+    pub tx_packets: u64,
+}
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for SessionStats {}

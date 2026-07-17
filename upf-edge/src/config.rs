@@ -14,6 +14,9 @@ pub struct UpfConfig {
     
     #[serde(default)]
     pub redis: RedisConfig,
+    
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -72,6 +75,27 @@ impl Default for RedisConfig {
         }
     }
 }
+
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MetricsConfig {
+    #[serde(default = "default_metrics_enabled")]
+    pub enabled: bool,
+
+    #[serde(default = "default_metrics_addr")]
+    pub listen_addr: String,
+}
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            listen_addr: default_metrics_addr(),
+        }
+    }
+}
+
+fn default_metrics_enabled() -> bool { true }
+fn default_metrics_addr() -> String { "0.0.0.0:9091".to_string() }
 
 fn default_pfcp_port() -> u16 { 8805 }
 fn default_redis_url() -> String { "redis://127.0.0.1/".to_string() }

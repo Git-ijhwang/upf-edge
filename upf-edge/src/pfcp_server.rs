@@ -35,9 +35,6 @@ pub struct PfcpServer {
     /// Recovery timestamp(NTP)
     pub recovery_ts: u32,
 
-    /// PFCP Association Status
-    // pub associated: bool,
-
     pub associations: std::collections::HashMap<Ipv4Addr, crate::association::SmfAssociation>,
 
     /// Next SEID
@@ -55,13 +52,10 @@ pub struct PfcpServer {
     /// Last time when PFCP msg receive
     pub last_activity: std::time::Instant,
 
-    // smf_pfcp_port: u16,
-
     /// TUI 이벤트 채널 (TUI 미사용 시 None)
     pub tx_tui: Option<tokio::sync::mpsc::Sender<crate::tui::app::AppEvent>>,
 
     pub session_store: Option<std::sync::Arc<crate::session_store::SessionStore>>,
-    // pub smf_recovery_ts: Option<u32>,
 }
 
 

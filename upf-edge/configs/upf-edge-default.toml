@@ -42,3 +42,7 @@ gnb_addr = "172.22.0.23"
 [redis]
 url = "redis://127.0.0.1/"
 enabled = true
+
+[metrics]
+enabled = true
+listen_addr = "0.0.0.0:9091"

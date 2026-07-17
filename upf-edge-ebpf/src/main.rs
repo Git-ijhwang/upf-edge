@@ -2,14 +2,17 @@
 #![no_main]
 
 // use core::intrinsics::offload;
-
 use aya_ebpf::{
     bindings::xdp_action,
     macros::{
         xdp,
         map,
     },
-    maps::HashMap,
+    maps::{
+        Array,
+        HashMap,
+        PerCpuHashMap
+    },
     programs::XdpContext,
     helpers::{
         bpf_xdp_adjust_head,
@@ -20,6 +23,7 @@ use aya_log_ebpf::info;
 use upf_edge_common::{
     SessionInfo,
     SessionKey,
+    SessionStats,
     PdrKey, PdrValue,
     FarKey, FarValue,
     MacAddr,
@@ -53,13 +57,16 @@ static FAR_MAP: HashMap<FarKey, FarValue> = HashMap::with_max_entries(4096, 0);
 
 /// Interface Index: [0]-N3(gNB direction) [1]=N6(Internet direction)
 #[map]
-static IF_INDEX: aya_ebpf::maps::Array<u32> = aya_ebpf::maps::Array::with_max_entries(2, 0);
+static IF_INDEX: Array<u32> = Array::with_max_entries(2, 0);
 
 /// Gateway MAC: [0]-N6 Bridge [1]-gNB MAC
 #[map]
-static GW_MAC: aya_ebpf::maps::Array<upf_edge_common::MacAddr> =
-    aya_ebpf::maps::Array::with_max_entries(2, 0); // 0: upfedge0, 1: bNB
+static GW_MAC: Array<upf_edge_common::MacAddr> =
+    Array::with_max_entries(2, 0); // 0: upfedge0, 1: bNB
 
+/// Statistics Counter: [0]-Uplink, [1]-Downlink
+#[map]
+static STATS_MAP: PerCpuHashMap<SessionKey, SessionStats> = PerCpuHashMap::with_max_entries(1024, 0);
 
 //==============================================================
 // Utilities
@@ -147,7 +154,8 @@ fn uplink_check_far(session: &SessionInfo) -> bool
     false
 }
 
-fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()> {
+fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
+{
     // 1. Ethernet Header Check (EtherType = IPv4)
     let eth_type = unsafe {
         match ptr_at::<u16>(ctx, 12) { //Ethernet Type Offset
@@ -252,13 +260,33 @@ fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()> {
         }
     };
 
-    // 8. PDR/FAR lookup
-    let should_drop = if session.pdr_count > 0 {
-        uplink_check_far(&session)
+    // 8. Statistics Update
+    let pkt_len = (ctx.data_end() - ctx.data()) as u64;
+    unsafe {
+        match STATS_MAP.get_ptr_mut(&key) {
+            Some(stats) => {
+                (*stats).rx_packets += 1;
+                (*stats).rx_bytes += pkt_len;
+            }
+            None => {
+                let _ = STATS_MAP.insert(&key, &SessionStats {
+                    rx_packets: 1,
+                    rx_bytes: pkt_len,
+                    tx_packets: 0,
+                    tx_bytes: 0,
+                }, 0);
+            }
+        }
     }
-    else {
-        false
-    };
+
+    // 9. PDR/FAR lookup
+    let should_drop =
+        if session.pdr_count > 0 {
+            uplink_check_far(&session)
+        }
+        else {
+            false
+        };
 
     if should_drop {
         return Ok(xdp_action::XDP_DROP);
@@ -388,6 +416,26 @@ fn try_n6_downlink(ctx: &XdpContext) -> Result<u32, ()>
             None => return Ok(xdp_action::XDP_PASS),
         }
     };
+
+    // 4. Statistics Update
+    let pkt_len = (ctx.data_end() - ctx.data()) as u64;
+    unsafe {
+        match STATS_MAP.get_ptr_mut(&key) {
+            Some(stats) => {
+                (*stats).tx_packets += 1;
+                (*stats).tx_bytes += pkt_len;
+            }
+            None => {
+                let _ = STATS_MAP.insert(&key, &SessionStats {
+                    rx_packets: 0,
+                    rx_bytes: 0,
+                    tx_packets: 1,
+                    tx_bytes: pkt_len,
+                }, 0);
+            }
+        }
+    }
+
 
     // 4. PDR/FAR lookup
     let (gnb_ip_be, teid_be) =  if session.pdr_count > 0 {

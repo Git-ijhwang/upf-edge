@@ -2,7 +2,7 @@ use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
-use aya::maps::HashMap;
+use aya::maps::{HashMap, PerCpuHashMap};
 use aya::programs::{Xdp, XdpFlags};
 use clap::Parser;
 
@@ -10,7 +10,7 @@ use clap::Parser;
 use log::{debug, warn};
 use tokio::signal;
 
-use upf_edge_common::{SessionInfo, SessionKey};
+use upf_edge_common::{SessionInfo, SessionKey, SessionStats};
 use crate::config::UpfConfig;
 
 use aya::maps::Array;
@@ -22,6 +22,7 @@ mod handle_msg;
 mod tui;
 mod config;
 mod association;
+mod metrics;
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -77,14 +78,13 @@ fn override_ipv4_with_config(cli_value: std::net::Ipv4Addr,
     -> anyhow::Result<std::net::Ipv4Addr>
 {
     if cli_value != cli_default {
-        Ok(cli_value)
+        return Ok(cli_value);
     }
-    else {
-        match config_value {
-            Some(s) => s.parse().
-                map_err(|e| anyhow::anyhow!("Invalid IP {:?} in config: {}", s, e)),
-            None => Ok(cli_value),
-        }
+
+    match config_value {
+        Some(s) => s.parse().
+            map_err(|e| anyhow::anyhow!("Invalid IP {:?} in config: {}", s, e)),
+        None => Ok(cli_value),
     }
 }
 
@@ -194,12 +194,6 @@ async fn main() -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| "upfedge1".to_string());
 
-    let n4_addr = override_ipv4_with_config(opt.n4_addr, "0.0.0.0".parse().unwrap(),
-        config.pfcp.n4_addr.as_deref())?;
-    let n3_addr = override_ipv4_with_config(opt.n3_addr, "127.22.0.8".parse().unwrap(),
-        config.interfaces.n3_addr.as_deref())?;
-    let tui = opt.tui;
-
     handle_msg::set_ue_deliver_iface(ue_deliver_iface.clone());
 
     // Bump the memlock rlimit. This is needed for older kernels that don't use the
@@ -281,6 +275,9 @@ async fn main() -> anyhow::Result<()> {
         HashMap::try_from(ebpf.take_map("FAR_MAP").unwrap())?;
     let far_map = Arc::new(Mutex::new(far_map));
 
+    let stats_map: PerCpuHashMap<_, SessionKey, SessionStats> = PerCpuHashMap::try_from(ebpf.take_map("STATS_MAP").unwrap())?;
+    let stats_map = Arc::new(Mutex::new(stats_map));
+
     // for N3 Interface
     let program_n3: &mut Xdp = ebpf.program_mut("upf_edge_n3").unwrap().try_into()?;
     program_n3.load()?;
@@ -296,9 +293,20 @@ async fn main() -> anyhow::Result<()> {
     println!("N6 XDP attached to {}", iface_n6);
 
 
+    if config.metrics.enabled {}
+    let n4_addr = override_ipv4_with_config(
+        opt.n4_addr,
+        "0.0.0.0".parse().unwrap(),
+        config.pfcp.n4_addr.as_deref())?;
+    let n3_addr = override_ipv4_with_config(
+        opt.n3_addr,
+        "127.22.0.8".parse().unwrap(),
+        config.interfaces.n3_addr.as_deref())?;
+
     let pfcp = Arc::new(Mutex::new(pfcp_server::PfcpServer::new(n4_addr, n3_addr)));
 
-    match session_store::SessionStore::new("redis://127.0.0.1/") {
+    let redis_url = config.redis.url.as_ref();
+    match session_store::SessionStore::new(redis_url) {
         Ok(store) => {
             pfcp.lock().unwrap().set_session_store(store);
             log::info!("[Redis] SessionStore initialized");
@@ -308,12 +316,20 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    /* Prometheus Exporter */
+    if config.metrics.enabled {
+        let addr: std::net::SocketAddr = config.metrics.listen_addr.parse()?;
+        metrics::exporter::init(addr)?;
+        metrics::session_stats::spawn_stats_poller(stats_map.clone());
+    }
+
+    let tui = opt.tui;
     if tui {
         let (tx_tui, rx_tui) = tokio::sync::mpsc::channel(100);
 
         // env_logger 대신 TuiLogger 등록
         log::set_boxed_logger(Box::new(TuiLogger {
-            tx: tx_tui.clone()  // ← 여기서 문제 — try_send 필요
+            tx: tx_tui.clone()
         })).ok();
         log::set_max_level(log::LevelFilter::Info);
 

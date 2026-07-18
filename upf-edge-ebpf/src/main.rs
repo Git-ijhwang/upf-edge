@@ -344,7 +344,8 @@ fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
 
 
 #[inline(always)]
-fn downlink_get_far(session: &SessionInfo) -> Option<(u32, u32)>
+fn downlink_get_far(session: &SessionInfo) -> Option< FarValue >
+// (u32, u32)
 {
     let mut i = 0usize;
     while i < MAX_PDR_PER_SESSION {
@@ -373,6 +374,7 @@ fn downlink_get_far(session: &SessionInfo) -> Option<(u32, u32)>
             }
         };
 
+        /*
         if far.apply_action & ACTION_DROP != 0 {
             return None;
         }
@@ -380,7 +382,9 @@ fn downlink_get_far(session: &SessionInfo) -> Option<(u32, u32)>
         if far.apply_action & ACTION_FORW != 0 {
             return Some((far.gnb_ip, far.teid));
         }
+        */
 
+        return Some(far);
     }
     None
 }
@@ -440,8 +444,14 @@ fn try_n6_downlink(ctx: &XdpContext) -> Result<u32, ()>
     // 4. PDR/FAR lookup
     let (gnb_ip_be, teid_be) =  if session.pdr_count > 0 {
         match downlink_get_far(&session) {
-            Some((ip, teid)) => (ip, teid),
+            Some(far) if far.apply_action & ACTION_DROP != 0 => {
+                return Ok(xdp_action::XDP_DROP);
+            }
+            Some(far) if far.apply_action & ACTION_FORW != 0 => (far.gnb_ip, far.teid),
+            Some(_) => (session.gnb_ip, session.teid),
             None => (session.gnb_ip, session.teid),
+            // Some((ip, teid)) => (ip, teid),
+            // None => (session.gnb_ip, session.teid),
         }
     }
     else {

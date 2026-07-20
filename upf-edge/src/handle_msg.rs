@@ -296,12 +296,15 @@ fn handle_session_establishment(header: &PfcpHeader,
             far_id:             pdr.far_id.unwrap_or(0),
             qer_id:             0,
             outer_header_removal:   pdr.outer_header_removal as u8,
-            sdf_proto:          0,
-            sdf_src_ip:         0,
-            sdf_dst_ip:         0,
-            sdf_src_port:       0,
-            sdf_dst_port:       0,
+            sdf_proto:          pdr.sdf_filter.map(|f| f.proto).unwrap_or(0),
+            sdf_src_ip:         pdr.sdf_filter.map(|f| u32::from(f.src_ip).to_be()).unwrap_or(0),
+            sdf_dst_ip:         pdr.sdf_filter.map(|f| u32::from(f.dst_ip).to_be()).unwrap_or(0),
+            sdf_src_port:       pdr.sdf_filter.map(|f| f.src_port).unwrap_or(0),
+            sdf_dst_port:       pdr.sdf_filter.map(|f| f.dst_port).unwrap_or(0),
         };
+
+        log::info!("  PDR[{}] sdf_filter raw={:?} → sdf_proto={:#x}",
+    pdr.pdr_id, pdr.sdf_filter, pdr_value.sdf_proto);  
 
         let mut map = pdr_map.lock().unwrap();
         map.insert(pdr_key, pdr_value, 0)?;

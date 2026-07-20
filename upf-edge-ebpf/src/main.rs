@@ -112,6 +112,92 @@ pub fn upf_edge_n6(ctx: XdpContext) -> u32
     }
 }
 
+
+#[inline(always)]
+fn sdf_matches(pdr: &PdrValue,
+                proto: u8,
+                src_ip: u32,
+                dst_ip: u32,
+                src_port: u16,
+                dst_port: u16,)
+    -> bool
+{
+    if pdr.sdf_proto != 0 && pdr.sdf_proto != proto {
+        return false;
+    }
+    if pdr.sdf_src_ip != 0 && pdr.sdf_src_ip != src_ip {
+        return false;
+    }
+    if pdr.sdf_dst_ip != 0 && pdr.sdf_dst_ip != dst_ip {
+        return false;
+    }
+    if pdr.sdf_src_port != 0 && pdr.sdf_src_port != src_port {
+        return false;
+    }
+    if pdr.sdf_dst_port != 0 && pdr.sdf_dst_port != dst_port {
+        return false;
+    }
+
+    true
+}
+
+
+#[inline(always)]
+fn select_far(session: &SessionInfo,
+                    iface_filter: u8,
+                    proto: u8,
+                    src_ip: u32,
+                    dst_ip: u32,
+                    src_port: u16,
+                    dst_port: u16,)
+    -> Option<FarValue> 
+{
+    let mut best_far: Option<FarValue> = None;
+    let mut best_precedence: u32 = u32::MAX;
+
+    let mut i = 0usize;
+    while i < MAX_PDR_PER_SESSION {
+        if i >= session.pdr_count as usize {
+            break;
+        }
+
+        let pdr_id = session.pdr_ids[i];
+        i += 1;
+
+        let pdr = unsafe {
+            match PDR_MAP.get(&PdrKey { pdr_id }) {
+                Some(p) => *p,
+                None => continue,
+            }
+        };
+
+        if pdr.source_interface != iface_filter {
+            continue;
+        }
+
+        if !sdf_matches(&pdr, proto, src_ip, dst_ip, src_port, dst_port) {
+            continue;
+        }
+
+        if pdr.precedence >= best_precedence {
+            continue;
+        }
+
+        let far = unsafe {
+            match FAR_MAP.get(&FarKey { far_id: pdr.far_id }) {
+                Some(f) => *f,
+                None => continue,
+            }
+        };
+
+        best_precedence = pdr.precedence;
+        best_far = Some(far);
+
+    }
+
+    best_far
+}
+
 #[inline(always)]
 fn uplink_check_far(session: &SessionInfo) -> bool 
 {
@@ -251,6 +337,38 @@ fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
         }
     };
 
+    let inner_proto = unsafe {
+        match ptr_at::<u8>(ctx, outer_total + 9) {
+            Some(p) => *p,
+            None => return Ok(xdp_action::XDP_PASS),
+        }
+    };
+
+    let inner_dst_ip_be = unsafe {
+        match ptr_at::<u32>(ctx, outer_total + 16) {
+            Some(p) => *p,
+            None => return Ok(xdp_action::XDP_PASS),
+        }
+    };
+
+    let (inner_src_port_be, inner_dst_port_be) =
+        if inner_proto == 6 || inner_proto == 17 {
+            unsafe {
+                match ptr_at::<u16>(ctx, outer_total + 20) {
+                    Some(p) => {
+                        let sp = *p;
+                        match ptr_at::<u16>(ctx, outer_total + 22) {
+                            Some(p2) => (sp, *p2),
+                            None => return Ok(xdp_action::XDP_PASS),
+                        }
+                    }
+                    None => return Ok(xdp_action::XDP_PASS),
+                }
+            }
+        } else {
+            (0u16, 0u16)
+        };
+
     // 7. Search SESSION MAP
     let key = SessionKey { ue_ip: ue_ip_be };
     let session = unsafe {
@@ -259,6 +377,30 @@ fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
             None => return Ok(xdp_action::XDP_PASS),
         }
     };
+
+    // 9. PDR/FAR lookup
+    let should_drop =
+        if session.pdr_count > 0 {
+            match select_far(
+                &session,
+                IFACE_ACCESS,
+                inner_proto,
+                ue_ip_be,
+                inner_dst_ip_be,
+                inner_src_port_be,
+                inner_dst_port_be,
+            ) {
+                Some(far) => far.apply_action & ACTION_DROP != 0,
+                None => false,
+            }
+        }
+        else {
+            false
+        };
+
+    if should_drop {
+        return Ok(xdp_action::XDP_DROP);
+    }
 
     // 8. Statistics Update
     let pkt_len = (ctx.data_end() - ctx.data()) as u64;
@@ -277,19 +419,6 @@ fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
                 }, 0);
             }
         }
-    }
-
-    // 9. PDR/FAR lookup
-    let should_drop =
-        if session.pdr_count > 0 {
-            uplink_check_far(&session)
-        }
-        else {
-            false
-        };
-
-    if should_drop {
-        return Ok(xdp_action::XDP_DROP);
     }
 
     // 9. get ethernet address
@@ -404,13 +533,41 @@ fn try_n6_downlink(ctx: &XdpContext) -> Result<u32, ()>
         return Ok(xdp_action::XDP_PASS);
     }
 
-    // 2. Read Destination address of IP header
+    // 2.0 Read Source address of IP header
+    let protocol = unsafe {
+        match ptr_at::<u8>(ctx, ETH_HDR_LEN + 9) {
+            Some(p ) => *p,
+            None => return Ok(xdp_action::XDP_PASS),
+        }
+    };
+    // 2.1 Read Source address of IP header
+    let src_ip_be = unsafe {
+        match ptr_at::<u32>(ctx, ETH_HDR_LEN + 12) {
+            Some(p) => *p, //Big-Endian type
+            None => return Ok(xdp_action::XDP_PASS),
+        }
+    };
+    // 2.2 Read Destination address of IP header
     let dst_ip_be = unsafe {
         match ptr_at::<u32>(ctx, ETH_HDR_LEN + 16) {
             Some(p) => *p, //Big-Endian type
             None => return Ok(xdp_action::XDP_PASS),
         }
     };
+
+    let src_port_be = unsafe {
+        match ptr_at::<u16>(ctx, ETH_HDR_LEN + IP_HDR_LEN) {
+            Some(p) => *p, //Big-Endian type
+            None => return Ok(xdp_action::XDP_PASS),
+        }
+    };
+    let dst_port_be = unsafe {
+        match ptr_at::<u16>(ctx, ETH_HDR_LEN + IP_HDR_LEN + 2) {
+            Some(p) => *p, //Big-Endian type
+            None => return Ok(xdp_action::XDP_PASS),
+        }
+    };
+
 
     // 3. Find the Session with key
     let key = SessionKey{ue_ip: dst_ip_be};
@@ -420,6 +577,30 @@ fn try_n6_downlink(ctx: &XdpContext) -> Result<u32, ()>
             None => return Ok(xdp_action::XDP_PASS),
         }
     };
+
+    let should_drop =
+        if session.pdr_count > 0 {
+            match select_far (
+                &session,
+                IFACE_CORE,
+                protocol,
+                src_ip_be,
+                dst_ip_be,
+                src_port_be,
+                dst_port_be,
+            ) {
+                Some(far) => far.apply_action & ACTION_DROP != 0,
+                None => false,
+            }
+        }
+        else {
+            false
+        };
+
+    if should_drop {
+        return Ok(xdp_action::XDP_DROP);
+    }
+
 
     // 4. Statistics Update
     let pkt_len = (ctx.data_end() - ctx.data()) as u64;

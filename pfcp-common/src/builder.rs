@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 use crate::header::PfcpHeader;
-use crate::ie::OuterHeaderCreation;
+use crate::ie::{OuterHeaderCreation, SdfFilter};
 use crate::types::*;
 
 /// 메시지 빌더. IE를 추가한 후 finish()로 완성.
@@ -83,6 +83,15 @@ impl MsgBuilder {
             val.extend_from_slice(&ue_ip.octets());
             Self::append_ie(&mut pdi, PFCP_IE_UE_IP_ADDRESS, &val);
         }
+
+        if let Some( ref sdf) = p.sdf_filter{
+            let mut val = vec![sdf.proto];
+            val.extend_from_slice(&sdf.src_ip.octets());
+            val.extend_from_slice(&sdf.dst_ip.octets());
+            val.extend_from_slice(&sdf.src_port.to_be_bytes());
+            val.extend_from_slice(&sdf.dst_port.to_be_bytes());
+            Self::append_ie(&mut pdi, PFCP_IE_SDF_FILTER, &val);
+        }
         Self::append_ie(&mut inner, PFCP_IE_PDI, &pdi);
 
         Self::append_ie(&mut inner, PFCP_IE_FAR_ID, &p.far_id.to_be_bytes());
@@ -150,6 +159,7 @@ pub struct PdrParams {
     pub ue_ip: Option<Ipv4Addr>,
     pub far_id: u32,
     pub outer_header_removal: bool,
+    pub sdf_filter: Option<SdfFilter>,
 }
 
 pub struct FarParams {
@@ -211,6 +221,7 @@ pub fn build_session_establishment_request(seq: u32, smf_addr: std::net::Ipv4Add
             ue_ip: Some(ue_ip),
             far_id: 1,
             outer_header_removal: true,
+            sdf_filter: None,
         }
     );
 
@@ -223,6 +234,7 @@ pub fn build_session_establishment_request(seq: u32, smf_addr: std::net::Ipv4Add
             ue_ip: Some(ue_ip),
             far_id: 2,
             outer_header_removal: false,
+            sdf_filter: None,
         }
     );
 
@@ -343,6 +355,7 @@ mod tests {
             source_interface: 0, // Access
             fteid_choose: true, ue_ip: Some(Ipv4Addr::new(10, 45, 0, 100)),
             far_id: 1, outer_header_removal: true,
+            sdf_filter: None,
         });
         let bytes = msg.finish();
 

@@ -79,12 +79,26 @@ pub async fn run(
         source_interface: INTERFACE_ACCESS,
         fteid_choose: true, ue_ip: Some(ue_ip),
         far_id: 1, outer_header_removal: true,
+        sdf_filter: Some(ie::SdfFilter {
+            proto: 0x06, // TCP
+            src_ip: ue_ip,
+            dst_ip: config.network.gnb_addr,
+            src_port: 1234,
+            dst_port: 5678,
+        }),
     });
     msg.add_create_pdr(&PdrParams {
         pdr_id: 2, precedence: 100,
         source_interface: INTERFACE_CORE,
         fteid_choose: false, ue_ip: Some(ue_ip),
         far_id: 2, outer_header_removal: false,
+        sdf_filter: Some(ie::SdfFilter {
+            proto: 0x06, // TCP
+            src_ip: ue_ip,
+            dst_ip: config.network.gnb_addr,
+            src_port: 1234,
+            dst_port: 5678,
+        }),
     });
     msg.add_create_far(&FarParams {
         far_id: 1, apply_action: ACTION_FORW,

@@ -59,6 +59,16 @@ pub fn iter_ies(mut buf: &[u8]) -> Vec<RawIE<'_>>
 // 파싱된 구조체
 // ═══════════════════════════════════════════════════════════════
 
+/// SDF Filter Information
+#[derive(Debug, Clone, Copy)]
+pub struct SdfFilter {
+    pub proto: u8,
+    pub src_ip: Ipv4Addr,
+    pub dst_ip: Ipv4Addr,
+    pub src_port: u16,
+    pub dst_port: u16,
+}
+
 /// Outer Header Creation 정보 (GTP-U encap용)
 #[derive(Debug, Clone)]
 pub struct OuterHeaderCreation {
@@ -77,6 +87,7 @@ pub struct ParsedPDR {
     pub ue_ip: Option<Ipv4Addr>,
     pub far_id: Option<u32>,
     pub outer_header_removal: bool,
+    pub sdf_filter: Option<SdfFilter>,
 }
 
 /// Create FAR에서 추출한 포워딩 규칙
@@ -199,6 +210,22 @@ pub fn parse_apply_action(value: &[u8]) -> Result<u8, PfcpError> {
     Ok(value[0])
 }
 
+pub fn parse_sdf_filter(value: &[u8]) -> Result<SdfFilter, PfcpError> {
+    if value.len() < 13 {
+        return Err(PfcpError::IeParseError {
+            ie_type: PFCP_IE_SDF_FILTER, reason: "too short".into(),
+        });
+    }
+
+    let proto = value[0];
+    let src_ip = Ipv4Addr::new(value[1], value[2], value[3], value[4]);
+    let dst_ip = Ipv4Addr::new(value[5], value[6], value[7], value[8]);
+    let src_port = u16::from_be_bytes([value[9], value[10]]);
+    let dst_port = u16::from_be_bytes([value[11], value[12]]);
+
+    Ok(SdfFilter { proto, src_ip, dst_ip, src_port, dst_port })
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Grouped IE 파서 (재귀)
 // ═══════════════════════════════════════════════════════════════
@@ -210,6 +237,7 @@ pub fn parse_create_pdr(value: &[u8]) -> Result<ParsedPDR, PfcpError> {
         pdr_id: 0, precedence: 0, source_interface: 0,
         local_fteid: None, ue_ip: None, far_id: None,
         outer_header_removal: false,
+        sdf_filter: None,
     };
 
     for ie in &ies {
@@ -237,6 +265,9 @@ pub fn parse_create_pdr(value: &[u8]) -> Result<ParsedPDR, PfcpError> {
             PFCP_IE_OUTER_HEADER_REMOVAL => {
                 pdr.outer_header_removal = true;
             }
+            PFCP_IE_SDF_FILTER => {
+                pdr.sdf_filter = Some(parse_sdf_filter(ie.value)?);
+            }
             _ => {} // 미지원 IE 무시
         }
     }
@@ -258,6 +289,9 @@ fn parse_pdi(value: &[u8], pdr: &mut ParsedPDR) -> Result<(), PfcpError> {
             }
             PFCP_IE_UE_IP_ADDRESS => {
                 pdr.ue_ip = Some(parse_ue_ip_address(ie.value)?);
+            }
+            PFCP_IE_SDF_FILTER => {
+                pdr.sdf_filter = Some(parse_sdf_filter(ie.value)?);
             }
             _ => {}
         }

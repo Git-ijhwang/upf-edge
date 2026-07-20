@@ -1,3 +1,5 @@
+use crate::ie::parse_create_pdr;
+
 pub const INTERFACE_ACCESS: u8 = 0;
 pub const INTERFACE_CORE: u8 = 1;
 pub const INTERFACE_SGI_LAN: u8 = 2;
@@ -434,6 +436,32 @@ pub fn is_grouped_ie(ie_type: u16) -> bool {
         PFCP_IE_REMOVE_FAR   |
         PFCP_IE_CREATE_URR   |
         PFCP_IE_CREATE_QER   |
-        PFCP_IE_CREATE_BAR
+        PFCP_IE_CREATE_BAR   |
+        PFCP_IE_PDI
     )
 }
+
+
+#[test]
+    fn test_parse_pdr_with_sdf_filter() {
+        let mut pdi = Vec::new();
+        pdi.extend_from_slice(&[0x00, 0x14, 0x00, 0x01, 0x00]);
+        pdi.extend_from_slice(&[0x00, 0x5D, 0x00, 0x05, 0x02, 192, 168, 100, 100]);
+        // SDF Filter (type=23, len=13): proto=6, src_ip=0, dst_ip=0, src_port=0, dst_port=0
+        pdi.extend_from_slice(&[0x00, 0x17, 0x00, 0x0D, 6, 0,0,0,0, 0,0,0,0, 0,0, 0,0]);
+        //                                    ^^^^ len=13(0x0D)      ^^^^^^^^^^^^^^^^^^ 1+4+4+2+2=13바이트
+
+        let mut outer = Vec::new();
+        outer.extend_from_slice(&[0x00, 0x38, 0x00, 0x02, 0x00, 0x01]);
+        outer.extend_from_slice(&[0x00, 0x1D, 0x00, 0x04, 0x00, 0x00, 0x00, 0x64]);
+        let pdi_len = pdi.len() as u16;
+        outer.extend_from_slice(&[0x00, 0x02]);
+        outer.extend_from_slice(&pdi_len.to_be_bytes());
+        outer.extend_from_slice(&pdi);
+        outer.extend_from_slice(&[0x00, 0x6C, 0x00, 0x04, 0x00, 0x00, 0x00, 0x01]);
+
+        let pdr = parse_create_pdr(&outer).unwrap();
+        assert!(pdr.sdf_filter.is_some(), "SDF Filter should be parsed, got: {:?}", pdr.sdf_filter);
+        let sdf = pdr.sdf_filter.unwrap();
+        assert_eq!(sdf.proto, 6);
+    }

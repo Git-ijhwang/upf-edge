@@ -208,26 +208,61 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
 
     msg.add_fseid(cp_seid, config.network.smf_n4_addr);
 
+    // PDR #1:
     msg.add_create_pdr(&pfcp_common::builder::PdrParams {
-        pdr_id: 1,
+        pdr_id: 101,
         precedence: 100,
         source_interface: INTERFACE_ACCESS,
         fteid_choose: false,
         ue_ip: Some(ue_ip),
-        far_id: 2,
+        far_id: 101,
         outer_header_removal: false,
+        sdf_filter: Some(pfcp_common::ie::SdfFilter {
+            proto: 6,
+            src_ip: Ipv4Addr::UNSPECIFIED,
+            dst_ip: Ipv4Addr::UNSPECIFIED,
+            src_port: 0,
+            dst_port: 0,
+        }),
+    });
+
+    // PDR #2:
+    msg.add_create_pdr(&pfcp_common::builder::PdrParams {
+        pdr_id: 102,
+        precedence: 200,
+        source_interface: INTERFACE_ACCESS,
+        fteid_choose: false,
+        ue_ip: Some(ue_ip),
+        far_id: 103,
+        outer_header_removal: false,
+        sdf_filter: None,
     });
 
 
+    // PDR #3:
+    msg.add_create_pdr(&pfcp_common::builder::PdrParams {
+        pdr_id: 103,
+        precedence: 100,
+        source_interface: INTERFACE_CORE,
+        fteid_choose: false,
+        ue_ip: Some(ue_ip),
+        far_id: 102,
+        outer_header_removal: false,
+        sdf_filter: None,
+    });
+
+
+    // FAR #3:
     msg.add_create_far(&pfcp_common::builder::FarParams {
-        far_id: 1,
+        far_id: 101,
         apply_action: ACTION_FORW,
         dest_interface: INTERFACE_CORE,
         outer_header_creation: None,
     });
 
+    // FAR #2
     msg.add_create_far(&pfcp_common::builder::FarParams {
-        far_id: 2,
+        far_id: 102,
         apply_action: ACTION_FORW,
         dest_interface: INTERFACE_ACCESS,
         outer_header_creation: Some(pfcp_common::ie::OuterHeaderCreation {
@@ -235,6 +270,14 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
             peer_addr: config.network.gnb_addr,
             port: 2152,
         }),
+    });
+
+    // FAR #3
+    msg.add_create_far(&pfcp_common::builder::FarParams {
+        far_id: 103,
+        apply_action: ACTION_DROP,
+        dest_interface: INTERFACE_CORE,
+        outer_header_creation: None,
     });
 
     let req = msg.finish();

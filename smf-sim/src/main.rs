@@ -210,12 +210,12 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
 
     // PDR #1:
     msg.add_create_pdr(&pfcp_common::builder::PdrParams {
-        pdr_id: 101,
+        pdr_id: 1,
         precedence: 100,
         source_interface: INTERFACE_ACCESS,
         fteid_choose: false,
         ue_ip: Some(ue_ip),
-        far_id: 101,
+        far_id: 1,
         outer_header_removal: false,
         sdf_filter: Some(pfcp_common::ie::SdfFilter {
             proto: 6,
@@ -228,12 +228,12 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
 
     // PDR #2:
     msg.add_create_pdr(&pfcp_common::builder::PdrParams {
-        pdr_id: 102,
+        pdr_id: 2,
         precedence: 200,
         source_interface: INTERFACE_ACCESS,
         fteid_choose: false,
         ue_ip: Some(ue_ip),
-        far_id: 103,
+        far_id: 3,
         outer_header_removal: false,
         sdf_filter: None,
     });
@@ -241,20 +241,20 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
 
     // PDR #3:
     msg.add_create_pdr(&pfcp_common::builder::PdrParams {
-        pdr_id: 103,
+        pdr_id: 3,
         precedence: 100,
         source_interface: INTERFACE_CORE,
         fteid_choose: false,
         ue_ip: Some(ue_ip),
-        far_id: 102,
+        far_id: 2,
         outer_header_removal: false,
         sdf_filter: None,
     });
 
 
-    // FAR #3:
+    // FAR #1:
     msg.add_create_far(&pfcp_common::builder::FarParams {
-        far_id: 101,
+        far_id: 1,
         apply_action: ACTION_FORW,
         dest_interface: INTERFACE_CORE,
         outer_header_creation: None,
@@ -262,7 +262,7 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
 
     // FAR #2
     msg.add_create_far(&pfcp_common::builder::FarParams {
-        far_id: 102,
+        far_id: 2,
         apply_action: ACTION_FORW,
         dest_interface: INTERFACE_ACCESS,
         outer_header_creation: Some(pfcp_common::ie::OuterHeaderCreation {
@@ -274,7 +274,7 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
 
     // FAR #3
     msg.add_create_far(&pfcp_common::builder::FarParams {
-        far_id: 103,
+        far_id: 3,
         apply_action: ACTION_DROP,
         dest_interface: INTERFACE_CORE,
         outer_header_creation: None,

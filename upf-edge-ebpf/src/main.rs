@@ -143,13 +143,13 @@ fn sdf_matches(pdr: &PdrValue,
 
 
 #[inline(always)]
-fn select_far(session: &SessionInfo,
-                    iface_filter: u8,
-                    proto: u8,
-                    src_ip: u32,
-                    dst_ip: u32,
-                    src_port: u16,
-                    dst_port: u16,)
+fn select_far( session: &SessionInfo,
+                iface_filter: u8,
+                proto: u8,
+                src_ip: u32,
+                dst_ip: u32,
+                src_port: u16,
+                dst_port: u16,)
     -> Option<FarValue> 
 {
     let mut best_far: Option<FarValue> = None;
@@ -165,7 +165,7 @@ fn select_far(session: &SessionInfo,
         i += 1;
 
         let pdr = unsafe {
-            match PDR_MAP.get(&PdrKey { pdr_id }) {
+            match PDR_MAP.get(&PdrKey::new(session.seid, pdr_id)) {
                 Some(p) => *p,
                 None => continue,
             }
@@ -184,7 +184,7 @@ fn select_far(session: &SessionInfo,
         }
 
         let far = unsafe {
-            match FAR_MAP.get(&FarKey { far_id: pdr.far_id }) {
+            match FAR_MAP.get(&FarKey::new(session.seid, pdr.far_id)) {
                 Some(f) => *f,
                 None => continue,
             }
@@ -211,7 +211,7 @@ fn uplink_check_far(session: &SessionInfo) -> bool
         i += 1;
 
         let pdr = unsafe {
-            match PDR_MAP.get(&PdrKey { pdr_id }) {
+            match PDR_MAP.get(&PdrKey::new(session.seid, pdr_id )) {
                 Some(p) => *p,
                 None => continue,
             }
@@ -222,7 +222,7 @@ fn uplink_check_far(session: &SessionInfo) -> bool
         }
 
         let far = unsafe {
-            match FAR_MAP.get(&FarKey { far_id: pdr.far_id }) {
+            match FAR_MAP.get(&FarKey::new(session.seid, pdr.far_id)) {
                 Some(f) => *f,
                 None => continue,
             }
@@ -486,7 +486,7 @@ fn downlink_get_far(session: &SessionInfo) -> Option< FarValue >
         i += 1;
 
         let pdr: PdrValue = unsafe {
-            match PDR_MAP.get(&PdrKey { pdr_id }) {
+            match PDR_MAP.get(&PdrKey::new(session.seid, pdr_id )) {
                 Some(p) => *p,
                 None => continue,
             }
@@ -497,7 +497,7 @@ fn downlink_get_far(session: &SessionInfo) -> Option< FarValue >
         }
 
         let far: FarValue = unsafe {
-            match FAR_MAP.get(&FarKey { far_id: pdr.far_id }) {
+            match FAR_MAP.get(&FarKey::new(session.seid, pdr.far_id)) {
                 Some(f) => *f,
                 None => continue,
             }

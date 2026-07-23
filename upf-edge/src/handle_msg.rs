@@ -285,9 +285,8 @@ fn handle_session_establishment(header: &PfcpHeader,
     }
 
     for pdr in &create_pdrs {
-        let pdr_key = PdrKey {
-            pdr_id: pdr.pdr_id as u32,
-        };
+        let pdr_key = PdrKey::new(local_seid, pdr.pdr_id as u32);
+
         let pdr_value = PdrValue {
             precedence:         pdr.precedence,
             source_interface:   pdr.source_interface,
@@ -304,7 +303,7 @@ fn handle_session_establishment(header: &PfcpHeader,
         };
 
         log::info!("  PDR[{}] sdf_filter raw={:?} → sdf_proto={:#x}",
-    pdr.pdr_id, pdr.sdf_filter, pdr_value.sdf_proto);  
+        pdr.pdr_id, pdr.sdf_filter, pdr_value.sdf_proto);  
 
         let mut map = pdr_map.lock().unwrap();
         map.insert(pdr_key, pdr_value, 0)?;
@@ -313,9 +312,7 @@ fn handle_session_establishment(header: &PfcpHeader,
     }
 
     for far in &create_fars {
-        let far_key = FarKey {
-            far_id: far.far_id
-        };
+        let far_key = FarKey::new(local_seid, far.far_id);
 
         let far_value = FarValue {
             apply_action:       far.apply_action,
@@ -476,7 +473,7 @@ fn handle_session_modification(header: &PfcpHeader,
             local_seid, far.far_id, new_gnb_ip, new_teid);
 
         {
-            let far_key = FarKey { far_id: far.far_id };
+            let far_key = FarKey::new(local_seid, far.far_id );
             let mut map = far_map.lock().unwrap();
             if let Ok(mut fv) = map.get(&far_key, 0) {
                 fv.gnb_ip = u32::from(new_gnb_ip).to_be();
@@ -623,7 +620,7 @@ fn handle_session_deletion( header: &PfcpHeader,
                 let mut map = pdr_map.lock().unwrap();
                 for i in 0..pdr_count {
                     let pdr_id = pdr_ids[i];
-                    if let Ok(pv) = map.get(&PdrKey { pdr_id }, 0){
+                    if let Ok(pv) = map.get(&PdrKey::new(seid, pdr_id), 0){
                         far_ids.insert(pv.far_id);
                     }
                 }
@@ -634,7 +631,7 @@ fn handle_session_deletion( header: &PfcpHeader,
                 let mut map = pdr_map.lock().unwrap();
                 for i in 0..pdr_count {
                     let pdr_id = pdr_ids[i];
-                    let _ = map.remove(&PdrKey { pdr_id });
+                    let _ = map.remove(&PdrKey::new(seid, pdr_id));
                 }
             }
 
@@ -642,7 +639,7 @@ fn handle_session_deletion( header: &PfcpHeader,
             {
                 let mut map = far_map.lock().unwrap();
                 for &far_id in & far_ids {
-                    let _ = map.remove(&FarKey { far_id });
+                    let _ = map.remove(&FarKey::new(seid, far_id));
                 }
             }
 

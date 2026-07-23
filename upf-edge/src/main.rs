@@ -10,7 +10,12 @@ use clap::Parser;
 use log::{debug, warn};
 use tokio::signal;
 
-use upf_edge_common::{SessionInfo, SessionKey, SessionStats};
+use upf_edge_common::{
+    SessionInfo, SessionKey, SessionStats,
+    FarKey, FarValue,
+    PdrKey, PdrValue,
+    UrrKey, UrrStats,
+};
 use crate::config::UpfConfig;
 
 use aya::maps::Array;
@@ -23,6 +28,7 @@ mod tui;
 mod config;
 mod association;
 mod metrics;
+mod urr_reporter;
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -267,13 +273,17 @@ async fn main() -> anyhow::Result<()> {
     let session_map = Arc::new(Mutex::new(session_map));
     let pfcp_map: Arc<Mutex<HashMap<_, SessionKey, SessionInfo>>> = session_map.clone();
 
-    let pdr_map: HashMap<_, upf_edge_common::PdrKey, upf_edge_common::PdrValue> =
-        HashMap::try_from(ebpf.take_map("PDR_MAP").unwrap())?;
+    let pdr_map: aya::maps::HashMap<_, PdrKey, PdrValue> =
+        aya::maps::HashMap::try_from(ebpf.take_map("PDR_MAP").unwrap())?;
     let pdr_map = Arc::new(Mutex::new(pdr_map));
 
-    let far_map: HashMap<_, upf_edge_common::FarKey, upf_edge_common::FarValue> =
-        HashMap::try_from(ebpf.take_map("FAR_MAP").unwrap())?;
+    let far_map: aya::maps::HashMap<_, FarKey, FarValue> =
+        aya::maps::HashMap::try_from(ebpf.take_map("FAR_MAP").unwrap())?;
     let far_map = Arc::new(Mutex::new(far_map));
+
+    let urr_map: PerCpuHashMap<_, UrrKey, UrrStats> =
+        PerCpuHashMap::try_from(ebpf.take_map("URR_MAP").unwrap())?;
+    let urr_map = Arc::new(Mutex::new(urr_map));
 
     let stats_map: PerCpuHashMap<_, SessionKey, SessionStats> = PerCpuHashMap::try_from(ebpf.take_map("STATS_MAP").unwrap())?;
     let stats_map = Arc::new(Mutex::new(stats_map));
@@ -336,7 +346,12 @@ async fn main() -> anyhow::Result<()> {
 
         pfcp.lock().unwrap().set_tui_sender(tx_tui);
         tokio::spawn(async move {
-            if let Err(e) = pfcp_server::run(pfcp, pfcp_map, pdr_map.clone(), far_map.clone()).await {
+            if let Err(e) =
+                pfcp_server::run(pfcp,
+                                pfcp_map,
+                                pdr_map.clone(),
+                                far_map.clone(),
+                                urr_map.clone()).await {
                 log::error!("PFCP Server error: {}", e);
             }
         });
@@ -346,8 +361,13 @@ async fn main() -> anyhow::Result<()> {
     else {
         // Not Tui
         tokio::spawn(async move {
-            if let Err(e) = pfcp_server::run(pfcp, pfcp_map, pdr_map.clone(), far_map.clone()).await {
-                log::error!("PFCP Server error: {}", e);
+            if let Err(e) =
+                pfcp_server::run(pfcp,
+                                pfcp_map,
+                                pdr_map.clone(),
+                                far_map.clone(),
+                                urr_map.clone()).await {
+                    log::error!("PFCP Server error: {}", e);
             }
         });
 

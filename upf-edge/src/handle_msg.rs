@@ -4,15 +4,19 @@ use std::process::Command;
 use tokio::net::UdpSocket;
 use tokio::time::{Duration};
 
-use aya::maps::HashMap;
+use aya::maps::{
+    HashMap,
+    PerCpuHashMap,
+    MapData,
+};
 use upf_edge_common::{
-    FarKey,
-    FarValue,
     MAX_PDR_PER_SESSION,
-    PdrKey,
-    PdrValue,
-    SessionInfo,
-    SessionKey};
+    SessionInfo, SessionKey,
+    FarKey, FarValue,
+    PdrKey, PdrValue,
+    UrrKey, UrrStats,
+};
+use crate::pfcp_server::{SessionData, PfcpServer, UrrConfig};
 
 use ::metrics::gauge;
 
@@ -22,7 +26,6 @@ use pfcp_common::dict_ext;
 use pfcp_common::ie;
 use pfcp_common::types::*;
 
-use crate::pfcp_server::{SessionData, PfcpServer};
 
 
 static UE_DELIVER_IFACE: OnceLock<String> = OnceLock::new();
@@ -151,7 +154,7 @@ fn handle_session_association ( header: &PfcpHeader,
                                 body: &[u8],
                                 src: SocketAddr,
                                 server: &Arc<Mutex<PfcpServer>>,
-                                session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,)
+                                session_map: &Arc<Mutex<HashMap<MapData, SessionKey, SessionInfo>>>,)
     -> anyhow::Result<Vec<u8>>
 {
     let req = pfcp_common::messages::AssociationSetupReq::decode(body)?;
@@ -215,9 +218,10 @@ fn handle_session_establishment(header: &PfcpHeader,
                                 body: &[u8],
                                 src: SocketAddr,
                                 server: &Arc<Mutex<PfcpServer>>,
-                                session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
-                                pdr_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
-                                far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
+                                session_map: &Arc<Mutex<HashMap<MapData, SessionKey, SessionInfo>>>,
+                                pdr_map: &Arc<Mutex<HashMap<MapData, PdrKey, PdrValue>>>,
+                                far_map: &Arc<Mutex<HashMap<MapData, FarKey, FarValue>>>,
+                                urr_map: &Arc<Mutex<PerCpuHashMap <MapData, UrrKey, UrrStats>>>,)
     -> anyhow::Result<Vec<u8>>
 {
     let req = pfcp_common::messages::SessionEstablishmentReq::decode(body)?;
@@ -225,6 +229,7 @@ fn handle_session_establishment(header: &PfcpHeader,
     let smf_addr = req.smf_addr;
     let create_pdrs = req.create_pdrs;
     let create_fars = req.create_fars;
+    let create_urrs = req.create_urrs;
 
     let mut srv = server.lock().unwrap();
 
@@ -294,6 +299,7 @@ fn handle_session_establishment(header: &PfcpHeader,
             qfi:                0,
             far_id:             pdr.far_id.unwrap_or(0),
             qer_id:             0,
+            urr_id:             pdr.urr_id.unwrap_or(0),
             outer_header_removal:   pdr.outer_header_removal as u8,
             sdf_proto:          pdr.sdf_filter.map(|f| f.proto).unwrap_or(0),
             sdf_src_ip:         pdr.sdf_filter.map(|f| u32::from(f.src_ip).to_be()).unwrap_or(0),
@@ -338,6 +344,37 @@ fn handle_session_establishment(header: &PfcpHeader,
                 .map(|o| o.peer_addr)
                 .unwrap_or(std::net::Ipv4Addr::UNSPECIFIED)
         );
+    }
+
+    for urr in &create_urrs {
+        let urr_key = UrrKey::new(local_seid, urr.urr_id);
+
+        {
+            let mut map = urr_map.lock().unwrap();
+            let ncpus = aya::util::nr_cpus().unwrap_or(1);
+            let zeros = aya::maps::PerCpuValues::try_from(
+                vec![UrrStats::default(); ncpus])?;
+            map.insert(urr_key, zeros, 0)?;
+        }
+
+        srv.urr_configs.insert(
+            (local_seid, urr.urr_id),
+            UrrConfig {
+                urr_id: urr.urr_id,
+                seid: local_seid,
+                cp_seid,
+                measurement_method: urr.measurement_method,
+                reporting_triggers: urr.reporting_triggers,
+                volume_threshold_total: urr.volume_threshold_total,
+                measurement_period: urr.measurement_period,
+                last_report: std::time::Instant::now(),
+                threshold_reported: false,
+                ur_seqn: 0,
+            },
+        );
+        log::info!("  URR[{}]: method={:#x}, triggers={:#x}, volth={:?}, period={:?}",
+            urr.urr_id, urr.measurement_method, urr.reporting_triggers,
+            urr.volume_threshold_total, urr.measurement_period);
     }
 
     let session_data = SessionData {
@@ -694,7 +731,8 @@ pub fn handle_message ( data: &[u8],
                         server: &Arc<Mutex<PfcpServer>>,
                         session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
                         pdr_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
-                        far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
+                        far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,
+                        urr_map: &Arc<Mutex<PerCpuHashMap<aya::maps::MapData, upf_edge_common::UrrKey, upf_edge_common::UrrStats>>>,)
     -> anyhow::Result<Vec<u8>>
 {
     let (header, body) = decode_header(data)?;
@@ -711,7 +749,7 @@ pub fn handle_message ( data: &[u8],
         }
 
         PFCP_SESSION_ESTABLISHMENT_REQ => {
-            handle_session_establishment(&header, body, src, server, session_map, pdr_map, far_map)
+            handle_session_establishment(&header, body, src, server, session_map, pdr_map, far_map, urr_map)
         }
 
         PFCP_SESSION_MODIFICATION_REQ => {

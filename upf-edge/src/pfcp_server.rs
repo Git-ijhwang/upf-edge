@@ -1,12 +1,19 @@
 //! PFCP Server - Receive SMF Message via UDP 8805 and Response
 
 use std::net::{Ipv4Addr, SocketAddr };
+// use std::collections::{HashMap};
 use std::sync::{Arc, Mutex};
+
 use tokio::net::UdpSocket;
 use tokio::time::{Duration};
 
-use aya::maps::HashMap;
-use upf_edge_common::{SessionInfo, SessionKey};
+use aya::maps::{HashMap, MapData};
+use upf_edge_common::{
+    SessionInfo, SessionKey,
+    FarKey, FarValue,
+    PdrKey, PdrValue,
+    UrrKey, UrrStats,
+};
 
 use pfcp_common::header::PfcpHeader;
 use pfcp_common::builder;
@@ -22,6 +29,22 @@ pub struct SessionData {
     pub teid: u32,
     pub gnb_ip: Ipv4Addr,
     pub cp_seid: u64,
+}
+
+#[derive(Clone, Debug, Copy)]
+pub struct UrrConfig {
+    pub urr_id: u32,
+    pub seid: u64,
+    pub cp_seid: u64,
+
+    pub measurement_method: u8,
+    pub reporting_triggers: u8,
+    pub volume_threshold_total: Option<u64>,
+    pub measurement_period: Option<u32>,
+
+    pub last_report: std::time::Instant,
+    pub threshold_reported: bool,
+    pub ur_seqn: u32,
 }
 
 ///PFCP Server Status
@@ -46,6 +69,10 @@ pub struct PfcpServer {
     /// SEID → UE IP 매핑 (Session Deletion 시 맵 제거용)
     pub sessions: std::collections::HashMap<u64, SessionData>,
 
+    /// URR -> Threshold/period
+    /// XDP only count, and the judgement of threshold do at Userspace
+    pub urr_configs: std::collections::HashMap<(u64, u32), UrrConfig>,
+
     /// SMF Address learned during Association procedure
     pub peer_addr: Option<SocketAddr>,
 
@@ -55,15 +82,15 @@ pub struct PfcpServer {
     /// TUI 이벤트 채널 (TUI 미사용 시 None)
     pub tx_tui: Option<tokio::sync::mpsc::Sender<crate::tui::app::AppEvent>>,
 
-    pub session_store: Option<std::sync::Arc<crate::session_store::SessionStore>>,
+    pub session_store: Option<Arc<crate::session_store::SessionStore>>,
+
+    pub next_report_seq: u32,
 }
 
 
 impl PfcpServer
 {
-    pub fn new(n4_addr: Ipv4Addr, n3_addr: Ipv4Addr)
-        -> Self
-    {
+    pub fn new(n4_addr: Ipv4Addr, n3_addr: Ipv4Addr) -> Self {
         let unix_now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -81,8 +108,10 @@ impl PfcpServer
             peer_addr: None,
             last_activity: std::time::Instant::now(),
             tx_tui: None,
+            urr_configs: std::collections::HashMap::new(),
             session_store: None,
             // smf_recovery_ts: None,
+            next_report_seq: 1000,
         }
     }
 
@@ -100,13 +129,20 @@ impl PfcpServer
         t
     }
 
+    pub fn alloc_report_seq(&mut self) -> u32 {
+        let r = self.next_report_seq;
+        self.next_report_seq = self.next_report_seq.wrapping_add(1);
+
+        r
+    }
+
     pub fn set_tui_sender (&mut self,
         sender: tokio::sync::mpsc::Sender<crate::tui::app::AppEvent>) {
         self.tx_tui = Some(sender);
     }
 
     pub fn set_session_store(&mut self, store: crate::session_store::SessionStore) {
-        self.session_store = Some(std::sync::Arc::new(store));
+        self.session_store = Some(Arc::new(store));
     }
 
 
@@ -139,14 +175,14 @@ impl PfcpServer
 
     /// Node ID로 association 조회 (Step 1 — 향후 step에서 사용)
     #[allow(dead_code)]
-    pub fn get_association(&self, node_id: &std::net::Ipv4Addr) 
+    pub fn get_association(&self, node_id: &Ipv4Addr) 
         -> Option<&crate::association::SmfAssociation> 
     {
         self.associations.get(node_id)
     }
 
     #[allow(dead_code)]
-    pub fn get_association_mut(&mut self, node_id: &std::net::Ipv4Addr) 
+    pub fn get_association_mut(&mut self, node_id: &Ipv4Addr) 
         -> Option<&mut crate::association::SmfAssociation> 
     {
         self.associations.get_mut(node_id)
@@ -207,7 +243,7 @@ fn touch_activity(server: &Arc<Mutex<PfcpServer>>) {
 
 
 async fn keepalive_task( server: Arc<Mutex<PfcpServer>>,
-                             socket: Arc<UdpSocket>)
+                         socket: Arc<UdpSocket>)
 {
     let mut keepalive_seq = 200u32;
     let interval = std::time::Duration::from_secs(15);
@@ -248,9 +284,10 @@ async fn keepalive_task( server: Arc<Mutex<PfcpServer>>,
 
 ///PFCP Server
 pub async fn run ( server: Arc<Mutex<PfcpServer>>,
-                   session_map: Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
-                   pdr_map: Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
-                   far_map: Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
+                   session_map: Arc<Mutex<aya::maps::HashMap<MapData, SessionKey, SessionInfo>>>,
+                   pdr_map: Arc<Mutex<aya::maps::HashMap<MapData, PdrKey, PdrValue>>>,
+                   far_map: Arc<Mutex<aya::maps::HashMap<MapData, FarKey, FarValue>>>,
+                   urr_map: Arc<Mutex<aya::maps::PerCpuHashMap<MapData, UrrKey, UrrStats>>>,)
     -> anyhow::Result<()>
 {
     let n4_addr = {
@@ -290,6 +327,9 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
     // let mut keepalive_spawned = false;
     tokio::spawn(keepalive_task(server.clone(), socket.clone()));
 
+    crate::urr_reporter::spawn_urr_reporter(urr_map.clone(), server.clone(), socket.clone());
+
+
     loop {
 
         let (n, src) = socket.recv_from(&mut buf).await?;
@@ -301,10 +341,11 @@ pub async fn run ( server: Arc<Mutex<PfcpServer>>,
         let session_map = session_map.clone();
         let pdr_map = pdr_map.clone();
         let far_map = far_map.clone();
+        let urr_map = urr_map.clone();
 
         tokio::spawn(async move {
             touch_activity(&server);
-            match handle_message(&packet, src, &server, &session_map, &pdr_map, &far_map) {
+            match handle_message(&packet, src, &server, &session_map, &pdr_map, &far_map, &urr_map) {
                 Ok(response) => {
                     if !response.is_empty() {
                         if let Err(e) = socket.send_to(&response, src).await {

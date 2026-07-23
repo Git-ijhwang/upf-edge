@@ -12,7 +12,7 @@ use std::sync::{OnceLock, Arc, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
 use clap::{Parser, Subcommand};
 use tokio::time::{Duration};
-use pfcp_common::builder::MsgBuilder;
+use pfcp_common::builder::{MsgBuilder, PdrParams};
 use pfcp_common::header::PfcpHeader;
 use pfcp_common::ie;
 use pfcp_common::types::*;
@@ -209,13 +209,14 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
     msg.add_fseid(cp_seid, config.network.smf_n4_addr);
 
     // PDR #1:
-    msg.add_create_pdr(&pfcp_common::builder::PdrParams {
+    msg.add_create_pdr(&PdrParams {
         pdr_id: 1,
         precedence: 100,
         source_interface: INTERFACE_ACCESS,
         fteid_choose: false,
         ue_ip: Some(ue_ip),
         far_id: 1,
+        urr_id: None,
         outer_header_removal: false,
         sdf_filter: Some(pfcp_common::ie::SdfFilter {
             proto: 6,
@@ -227,26 +228,28 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
     });
 
     // PDR #2:
-    msg.add_create_pdr(&pfcp_common::builder::PdrParams {
+    msg.add_create_pdr(&PdrParams {
         pdr_id: 2,
         precedence: 200,
         source_interface: INTERFACE_ACCESS,
         fteid_choose: false,
         ue_ip: Some(ue_ip),
         far_id: 3,
+        urr_id: None,
         outer_header_removal: false,
         sdf_filter: None,
     });
 
 
     // PDR #3:
-    msg.add_create_pdr(&pfcp_common::builder::PdrParams {
+    msg.add_create_pdr(&PdrParams {
         pdr_id: 3,
         precedence: 100,
         source_interface: INTERFACE_CORE,
         fteid_choose: false,
         ue_ip: Some(ue_ip),
         far_id: 2,
+        urr_id: None,
         outer_header_removal: false,
         sdf_filter: None,
     });

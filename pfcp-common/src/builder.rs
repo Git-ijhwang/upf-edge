@@ -354,6 +354,47 @@ pub fn build_session_deletion_response(seq_num: u32, seid: u64)
     msg.finish()
 }
 
+
+/// Session Report Request
+pub fn build_session_report_request(seq_num: u32, cp_seid: u64,
+                                    urr_id: u32, ur_seqn: u32,
+                                    trigger: u8,
+                                    total_volume: u64,
+                                    ul_volume: u64,
+                                    dl_volume: u64)
+    -> Vec<u8>
+{
+    let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_REPORT_REQ, cp_seid, seq_num);
+    let mut msg = MsgBuilder::new(hdr);
+
+    msg.add_ie(PFCP_IE_REPORT_TYPE, &[REPORT_TYPE_USAR]);
+
+    let mut ur = Vec::new();
+    MsgBuilder::append_ie(&mut ur, PFCP_IE_URR_ID, &urr_id.to_be_bytes());
+    MsgBuilder::append_ie(&mut ur, PFCP_IE_UR_SEQN, &ur_seqn.to_be_bytes());
+    MsgBuilder::append_ie(&mut ur, PFCP_IE_USAGE_REPORT_TRIGGER, &[trigger, 0x00]);
+
+    let mut vm = vec![
+        VOLUME_MEASUREMENT_TOVOL | VOLUME_MEASUREMENT_ULVOL | VOLUME_MEASUREMENT_DLVOL
+    ];
+    vm.extend_from_slice(&total_volume.to_be_bytes());
+    vm.extend_from_slice(&ul_volume.to_be_bytes());
+    vm.extend_from_slice(&dl_volume.to_be_bytes());
+    MsgBuilder::append_ie(&mut ur, PFCP_IE_VOLUME_MEASUREMENT, &vm);
+
+    msg.add_ie(PFCP_IE_USAGE_REPORT_IN_SESS_RPT_REQ, &ur);
+
+    msg.finish()
+}
+
+pub fn build_session_report_response(seq_num: u32, seid: u64) -> Vec<u8>
+{
+    let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_REPORT_RSP, seid, seq_num);
+    let mut msg = MsgBuilder::new(hdr);
+    msg.add_cause(CAUSE_REQUEST_ACCEPTED);
+    msg.finish()
+}
+
 // ── Test ─────────────────────────────────────────────
 
 #[cfg(test)]

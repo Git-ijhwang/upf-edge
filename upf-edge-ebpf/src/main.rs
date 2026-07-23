@@ -26,6 +26,7 @@ use upf_edge_common::{
     SessionStats,
     PdrKey, PdrValue,
     FarKey, FarValue,
+    UrrKey, UrrStats,
     MacAddr,
     IFACE_ACCESS, IFACE_CORE,
     ACTION_BUFF, ACTION_DROP, ACTION_FORW,
@@ -68,6 +69,9 @@ static GW_MAC: Array<upf_edge_common::MacAddr> =
 #[map]
 static STATS_MAP: PerCpuHashMap<SessionKey, SessionStats> = PerCpuHashMap::with_max_entries(1024, 0);
 
+/// Key: UrrKey { key: (seid << 16) | urr_id}
+#[map]
+static URR_MAP: PerCpuHashMap<UrrKey, UrrStats> = PerCpuHashMap::with_max_entries(4096, 0);
 //==============================================================
 // Utilities
 //==============================================================
@@ -150,9 +154,9 @@ fn select_far( session: &SessionInfo,
                 dst_ip: u32,
                 src_port: u16,
                 dst_port: u16,)
-    -> Option<FarValue> 
+    -> Option<(FarValue, u32)> 
 {
-    let mut best_far: Option<FarValue> = None;
+    let mut best_far: Option<(FarValue, u32)> = None;
     let mut best_precedence: u32 = u32::MAX;
 
     let mut i = 0usize;
@@ -191,7 +195,7 @@ fn select_far( session: &SessionInfo,
         };
 
         best_precedence = pdr.precedence;
-        best_far = Some(far);
+        best_far = Some((far, pdr.urr_id));
 
     }
 
@@ -239,6 +243,52 @@ fn uplink_check_far(session: &SessionInfo) -> bool
 
     false
 }
+
+
+#[inline(always)]
+fn urr_count(seid: u64, urr_id: u32, pkt_len: u64, uplink: bool)
+{
+    if urr_id == 0 {
+        return;
+    }
+
+    let key = UrrKey::new(seid, urr_id);
+    unsafe {
+        match URR_MAP.get_ptr_mut(&key) {
+            Some(stats) => {
+                if uplink {
+                    (*stats).ul_packets += 1;
+                    (*stats).ul_bytes += pkt_len;
+                }
+                else {
+                    (*stats).dl_packets += 1;
+                    (*stats).dl_bytes += pkt_len;
+                }
+            }
+
+            None => {
+                let init = if uplink {
+                    UrrStats {
+                        ul_bytes: pkt_len,
+                        ul_packets: 1,
+                        dl_bytes: 0,
+                        dl_packets: 0,
+                    }
+                }
+                else {
+                    UrrStats {
+                        ul_bytes: 0,
+                        ul_packets: 0,
+                        dl_bytes: pkt_len,
+                        dl_packets: 1,
+                    }
+                };
+                let _ = URR_MAP.insert(&key, &init, 0);
+            }
+        }
+    }
+}
+
 
 fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
 {
@@ -379,10 +429,10 @@ fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
     };
 
     // 9. PDR/FAR lookup
+    let mut matched_urr_id = 0u32;
     let should_drop =
         if session.pdr_count > 0 {
-            match select_far(
-                &session,
+            match select_far( &session,
                 IFACE_ACCESS,
                 inner_proto,
                 ue_ip_be,
@@ -390,7 +440,10 @@ fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
                 inner_src_port_be,
                 inner_dst_port_be,
             ) {
-                Some(far) => far.apply_action & ACTION_DROP != 0,
+                Some((far, urr_id)) => {
+                    matched_urr_id = urr_id;
+                    far.apply_action & ACTION_DROP != 0
+                }
                 None => false,
             }
         }
@@ -420,6 +473,8 @@ fn try_n3_uplink(ctx: &XdpContext) -> Result<u32, ()>
             }
         }
     }
+
+    urr_count(session.seid, matched_urr_id, pkt_len, false);
 
     // 9. get ethernet address
     let eth_src = unsafe {
@@ -578,6 +633,7 @@ fn try_n6_downlink(ctx: &XdpContext) -> Result<u32, ()>
         }
     };
 
+    let mut matched_urr_id = 0u32;
     let should_drop =
         if session.pdr_count > 0 {
             match select_far (
@@ -589,7 +645,11 @@ fn try_n6_downlink(ctx: &XdpContext) -> Result<u32, ()>
                 src_port_be,
                 dst_port_be,
             ) {
-                Some(far) => far.apply_action & ACTION_DROP != 0,
+                // Some(far) => far.apply_action & ACTION_DROP != 0,
+                Some((far, urr_id)) => {
+                    matched_urr_id = urr_id;
+                    far.apply_action & ACTION_DROP != 0
+                }
                 None => false,
             }
         }

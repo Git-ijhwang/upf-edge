@@ -14,11 +14,11 @@ use crate::transport::PfcpTransport;
 
 static TOTAL_MSG_CNT: u8 = 5;
 
-pub async fn run(
-    transport: &PfcpTransport,
-    state: &mut SimState,
-    config: &SimConfig,
-) -> anyhow::Result<()> {
+pub async fn run( transport: &PfcpTransport,
+                  state: &mut SimState,
+                  config: &SimConfig)
+    -> anyhow::Result<()>
+{
     tracing::info!("═══════════════════════════════════════");
     tracing::info!("  Scenario 1: Basic Session Lifecycle");
     tracing::info!("═══════════════════════════════════════");
@@ -78,7 +78,9 @@ pub async fn run(
         pdr_id: 1, precedence: 100,
         source_interface: INTERFACE_ACCESS,
         fteid_choose: true, ue_ip: Some(ue_ip),
-        far_id: 1, outer_header_removal: true,
+        far_id: 1,
+        urr_id:None,
+        outer_header_removal: true,
         sdf_filter: Some(ie::SdfFilter {
             proto: 0x06, // TCP
             src_ip: ue_ip,
@@ -91,7 +93,9 @@ pub async fn run(
         pdr_id: 2, precedence: 100,
         source_interface: INTERFACE_CORE,
         fteid_choose: false, ue_ip: Some(ue_ip),
-        far_id: 2, outer_header_removal: false,
+        far_id: 2,
+        urr_id:None,
+        outer_header_removal: false,
         sdf_filter: Some(ie::SdfFilter {
             proto: 0x06, // TCP
             src_ip: ue_ip,

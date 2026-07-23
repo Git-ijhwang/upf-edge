@@ -10,6 +10,22 @@ pub const ACTION_DROP: u8 = 0x01;
 pub const ACTION_FORW: u8 = 0x02;
 pub const ACTION_BUFF: u8 = 0x04;
 
+// ── Report Type (IE 39) — TS 29.244 §8.2.21 ──
+pub const REPORT_TYPE_DLDR: u8 = 0x01; // Downlink Data Report
+pub const REPORT_TYPE_USAR: u8 = 0x02; // Usage Report
+pub const REPORT_TYPE_ERIR: u8 = 0x04; // Error Indication Report
+pub const REPORT_TYPE_UPIR: u8 = 0x08; // User Plane Inactivity Report
+
+// ── Usage Report Trigger (IE 63) — TS 29.244 §8.2.41 ──
+// octet1 배치는 Reporting Triggers(37)와 동일
+pub const USAGE_REPORT_TRIGGER_PERIO: u8 = 0x01;
+pub const USAGE_REPORT_TRIGGER_VOLTH: u8 = 0x02;
+
+// ── Volume Measurement (IE 66) flags — TS 29.244 §8.2.45 ──
+pub const VOLUME_MEASUREMENT_TOVOL: u8 = 0x01;
+pub const VOLUME_MEASUREMENT_ULVOL: u8 = 0x02;
+pub const VOLUME_MEASUREMENT_DLVOL: u8 = 0x04;
+
 //PFCP Message Types
 pub const RESERVED: u8 =	                        0;
 pub const PFCP_HEARTBEAT_REQ: u8 =	                1;  //PFCP Node Related Message

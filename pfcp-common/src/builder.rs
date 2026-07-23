@@ -276,7 +276,7 @@ pub fn build_session_establishment_response( seq_num: u32,
     -> Vec<u8>
 {
     let hdr = PfcpHeader::new_session_msg(
-        PFCP_SESSION_ESTABLISHMENT_RSP, 0, seq_num);
+        PFCP_SESSION_ESTABLISHMENT_RSP, cp_seid, seq_num);
     let mut msg = MsgBuilder::new(hdr);
 
     msg.add_node_id_v4(our_addr);

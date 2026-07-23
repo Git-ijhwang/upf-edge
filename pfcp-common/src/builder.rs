@@ -1,6 +1,6 @@
 use std::net::Ipv4Addr;
 use crate::header::PfcpHeader;
-use crate::ie::{OuterHeaderCreation, SdfFilter};
+use crate::ie::{OuterHeaderCreation, SdfFilter, parse_create_urr};
 use crate::types::*;
 
 /// 메시지 빌더. IE를 추가한 후 finish()로 완성.
@@ -102,6 +102,34 @@ impl MsgBuilder {
         self.add_ie(PFCP_IE_CREATE_PDR, &inner);
     }
 
+    pub fn add_create_urr(&mut self, u: &UrrParams) {
+        let mut inner = Vec::new();
+
+        //URR ID
+        Self::append_ie(&mut inner, PFCP_IE_URR_ID, &u.urr_id.to_be_bytes());
+
+        //Measurement Method
+        Self::append_ie(&mut inner, PFCP_IE_MEASUREMENT_METHOD, &[u.measurement_method]);
+
+        //Reporting Triggers
+        Self::append_ie(&mut inner, PFCP_IE_REPORTING_TRIGGERS, &[u.reporting_triggers, 0x00]);
+
+        //Volume Theshold
+        if let Some(total) = u.volume_threshold_total {
+            let mut val = vec![VOLUME_THRESHOLD_TOVOL];
+            val.extend_from_slice(&total.to_be_bytes());
+            Self::append_ie(&mut inner, PFCP_IE_VOLUME_THRESHOLD, &val);
+        }
+
+        //Measurement Period
+        if let Some(period) = u.measurement_period {
+            Self::append_ie(&mut inner, PFCP_IE_MEASUREMENT_PERIOD, &period.to_be_bytes());
+        }
+
+        self.add_ie(PFCP_IE_CREATE_URR, &inner);
+
+    }
+
     pub fn add_create_far(&mut self, f: &FarParams) {
         let mut inner = Vec::new();
 
@@ -169,6 +197,13 @@ pub struct FarParams {
     pub outer_header_creation: Option<OuterHeaderCreation>,
 }
 
+pub struct UrrParams {
+    pub urr_id: u32,
+    pub measurement_method: u8,
+    pub reporting_triggers: u8,
+    pub volume_threshold_total: Option<u64>,
+    pub measurement_period: Option<u32>,
+}
 
 /// HeartBeat Response
 pub fn build_heartbeat_response(seq_num: u32, recovery_ts: u32)
@@ -372,4 +407,56 @@ mod tests {
         assert_eq!(pdr.far_id, Some(1));
         assert!(pdr.outer_header_removal);
     }
+}
+
+#[test]
+fn test_urr_build_parse_roundtrip() {
+    use crate::builder::{MsgBuilder, UrrParams};
+    use crate::header::PfcpHeader;
+
+    // 빌더로 Create URR 생성 (VOLTH + PERIO 둘 다)
+    let params = UrrParams {
+        urr_id: 5,
+        measurement_method: MEASUREMENT_METHOD_VOLUM,
+        reporting_triggers: REPORTING_TRIGGER_PERIO | REPORTING_TRIGGER_VOLTH,
+        volume_threshold_total: Some(1_000_000),
+        measurement_period: Some(60),
+    };
+
+    // Create URR IE의 inner 바이트만 뽑아서 파서에 직접 넣는 방식.
+    // add_create_urr가 self.add_ie로 최상위에 붙이므로,
+    // 여기서는 inner를 재구성해 parse_create_urr에 전달.
+    let mut inner = Vec::new();
+    MsgBuilder::append_ie(&mut inner, PFCP_IE_URR_ID, &params.urr_id.to_be_bytes());
+    MsgBuilder::append_ie(&mut inner, PFCP_IE_MEASUREMENT_METHOD, &[params.measurement_method]);
+    MsgBuilder::append_ie(&mut inner, PFCP_IE_REPORTING_TRIGGERS, &[params.reporting_triggers, 0x00]);
+    let mut vt = vec![VOLUME_THRESHOLD_TOVOL];
+    vt.extend_from_slice(&1_000_000u64.to_be_bytes());
+    MsgBuilder::append_ie(&mut inner, PFCP_IE_VOLUME_THRESHOLD, &vt);
+    MsgBuilder::append_ie(&mut inner, PFCP_IE_MEASUREMENT_PERIOD, &60u32.to_be_bytes());
+
+    let parsed = parse_create_urr(&inner).expect("parse ok");
+    assert_eq!(parsed.urr_id, 5);
+    assert_eq!(parsed.measurement_method, MEASUREMENT_METHOD_VOLUM);
+    assert_eq!(parsed.reporting_triggers & REPORTING_TRIGGER_PERIO, REPORTING_TRIGGER_PERIO);
+    assert_eq!(parsed.reporting_triggers & REPORTING_TRIGGER_VOLTH, REPORTING_TRIGGER_VOLTH);
+    assert_eq!(parsed.volume_threshold_total, Some(1_000_000));
+    assert_eq!(parsed.measurement_period, Some(60));
+}
+
+#[test]
+fn test_urr_volth_only() {
+    // VOLTH만, PERIO 없음 → measurement_period는 None
+    let mut inner = Vec::new();
+    crate::builder::MsgBuilder::append_ie(&mut inner, PFCP_IE_URR_ID, &1u32.to_be_bytes());
+    crate::builder::MsgBuilder::append_ie(&mut inner, PFCP_IE_MEASUREMENT_METHOD, &[MEASUREMENT_METHOD_VOLUM]);
+    crate::builder::MsgBuilder::append_ie(&mut inner, PFCP_IE_REPORTING_TRIGGERS, &[REPORTING_TRIGGER_VOLTH, 0x00]);
+    let mut vt = vec![VOLUME_THRESHOLD_TOVOL];
+    vt.extend_from_slice(&500u64.to_be_bytes());
+    crate::builder::MsgBuilder::append_ie(&mut inner, PFCP_IE_VOLUME_THRESHOLD, &vt);
+
+    let parsed = parse_create_urr(&inner).expect("parse ok");
+    assert_eq!(parsed.volume_threshold_total, Some(500));
+    assert_eq!(parsed.measurement_period, None);
+    assert_eq!(parsed.reporting_triggers & REPORTING_TRIGGER_PERIO, 0);
 }

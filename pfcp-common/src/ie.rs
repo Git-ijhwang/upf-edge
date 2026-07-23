@@ -99,6 +99,18 @@ pub struct ParsedFAR {
     pub outer_header_creation: Option<OuterHeaderCreation>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct ParsedURR {
+    pub urr_id: u32,
+    /// Measurement Method 비트 (VOLUM=0x02 등)
+    pub measurement_method: u8,
+    /// Reporting Triggers octet5 비트 (PERIO=0x01, VOLTH=0x02)
+    pub reporting_triggers: u8,
+    /// Volume Threshold — total volume (bytes). VOLTH 미설정 시 None
+    pub volume_threshold_total: Option<u64>,
+    /// Measurement Period (seconds). PERIO 미설정 시 None
+    pub measurement_period: Option<u32>,
+}
 // ═══════════════════════════════════════════════════════════════
 // 개별 IE 파서
 // ═══════════════════════════════════════════════════════════════
@@ -273,6 +285,105 @@ pub fn parse_create_pdr(value: &[u8]) -> Result<ParsedPDR, PfcpError> {
     }
     Ok(pdr)
 }
+
+
+fn parse_volume_threshold(value: &[u8]) -> Result<Option<u64>, PfcpError>
+{
+    if value.is_empty() {
+        return Ok(None)
+    }
+
+    let flags = value[0];
+    let mut off = 1usize;
+
+    if flags & VOLUME_THRESHOLD_TOVOL != 0 {
+        if value.len() < off + 8 {
+            return Err(PfcpError::BufferTooShort {
+                need: off + 8,
+                have: value.len()
+            });
+        }
+
+        let v = u64::from_be_bytes([
+            value[off], value[off+1], value[off+2], value[off+3],
+            value[off+4], value[off+5], value[off+6], value[off+7],
+        ]);
+        Ok (Some(v))
+    }
+    else {
+        Ok(None)
+    }
+
+    /*
+    let total = if flags & VOLUME_THRESHOLD_TOVOL != 0 {
+        if value.len() < off + 8 {
+            return Err(PfcpError::Truncated)
+        }
+
+        let v = u64::from_be_bytes( [
+            value[off], value[off+1], value[off+2], value[off+3],
+            value[off+4], value[off+5], value[off+6], value[off+7],
+        ]);
+        off += 8;
+        Some(v)
+    }
+    else {
+        None
+    };
+
+    let _ = off;
+    Ok(total)
+    */
+}
+
+pub fn parse_create_urr(value: &[u8])
+    -> Result<ParsedURR, PfcpError>
+{
+    let ies = iter_ies(value);
+    let mut urr = ParsedURR {
+        urr_id: 0,
+        measurement_method: 0,
+        reporting_triggers: 0,
+        volume_threshold_total: None,
+        measurement_period: None,
+    };
+
+    for ie in &ies {
+        match ie.ie_type {
+            PFCP_IE_URR_ID => {
+                if ie.value.len() >= 4 {
+                    urr.urr_id = u32::from_be_bytes([
+                        ie.value[0], ie.value[1], ie.value[2], ie.value[3],
+                    ]);
+                }
+            }
+            PFCP_IE_MEASUREMENT_METHOD => {
+                if !ie.value.is_empty() {
+                    urr.measurement_method = ie.value[0];
+                }
+            }
+            PFCP_IE_REPORTING_TRIGGERS => {
+                if !ie.value.is_empty() {
+                    urr.reporting_triggers = ie.value[0]
+                }
+            }
+            PFCP_IE_VOLUME_THRESHOLD => {
+                urr.volume_threshold_total = parse_volume_threshold(ie.value)?;
+            }
+            PFCP_IE_MEASUREMENT_PERIOD => {
+                if ie.value.len() >= 4 {
+                    urr.measurement_period = Some(u32::from_be_bytes ([
+                        ie.value[0], ie.value[1], ie.value[2], ie.value[3],
+                    ]));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(urr)
+}
+
 
 /// PDI (type=2) 파싱 — Create PDR 내부
 fn parse_pdi(value: &[u8], pdr: &mut ParsedPDR) -> Result<(), PfcpError> {

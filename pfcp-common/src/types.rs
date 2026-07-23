@@ -442,6 +442,24 @@ pub fn is_grouped_ie(ie_type: u16) -> bool {
 }
 
 
+// ── Reporting Triggers (IE type 37) — TS 29.244 §8.2.9 ──
+// Octet 5, bit 1 = LSB
+pub const REPORTING_TRIGGER_PERIO: u8 = 0x01; // Periodic Reporting
+pub const REPORTING_TRIGGER_VOLTH: u8 = 0x02; // Volume Threshold
+// (octet5 나머지: TIMTH=0x04, QUHTI=0x08, START=0x10, STOPT=0x20, DROTH=0x40, LIUSA=0x80)
+
+// ── Measurement Method (IE type 62) — TS 29.244 §8.2.40 ──
+pub const MEASUREMENT_METHOD_DURAT: u8 = 0x01; // bit1 Duration
+pub const MEASUREMENT_METHOD_VOLUM: u8 = 0x02; // bit2 Volume
+pub const MEASUREMENT_METHOD_EVENT: u8 = 0x04; // bit3 Event
+
+// ── Volume Threshold (IE type 31) flags — TS 29.244 §8.2.13 ──
+pub const VOLUME_THRESHOLD_TOVOL: u8 = 0x01; // bit1 Total Volume
+pub const VOLUME_THRESHOLD_ULVOL: u8 = 0x02; // bit2 Uplink Volume
+pub const VOLUME_THRESHOLD_DLVOL: u8 = 0x04; // bit3 Downlink Volume
+
+
+
 #[test]
     fn test_parse_pdr_with_sdf_filter() {
         let mut pdi = Vec::new();

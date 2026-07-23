@@ -86,6 +86,7 @@ pub struct ParsedPDR {
     pub local_fteid: Option<(u32, Ipv4Addr)>,
     pub ue_ip: Option<Ipv4Addr>,
     pub far_id: Option<u32>,
+    pub urr_id: Option<u32>,
     pub outer_header_removal: bool,
     pub sdf_filter: Option<SdfFilter>,
 }
@@ -247,7 +248,8 @@ pub fn parse_create_pdr(value: &[u8]) -> Result<ParsedPDR, PfcpError> {
     let ies = iter_ies(value);
     let mut pdr = ParsedPDR {
         pdr_id: 0, precedence: 0, source_interface: 0,
-        local_fteid: None, ue_ip: None, far_id: None,
+        local_fteid: None, ue_ip: None,
+        far_id: None, urr_id: None,
         outer_header_removal: false,
         sdf_filter: None,
     };
@@ -270,6 +272,13 @@ pub fn parse_create_pdr(value: &[u8]) -> Result<ParsedPDR, PfcpError> {
             PFCP_IE_FAR_ID => {
                 if ie.value.len() >= 4 {
                     pdr.far_id = Some(u32::from_be_bytes([
+                        ie.value[0], ie.value[1], ie.value[2], ie.value[3],
+                    ]));
+                }
+            }
+            PFCP_IE_URR_ID => {
+                if ie.value.len() >= 4 {
+                    pdr.urr_id = Some(u32::from_be_bytes([
                         ie.value[0], ie.value[1], ie.value[2], ie.value[3],
                     ]));
                 }
@@ -538,5 +547,37 @@ mod tests {
         let buf = vec![0x00, 0x38, 0x00, 0x0A, 0x00, 0x01];
         let ies = iter_ies(&buf);
         assert_eq!(ies.len(), 0); // truncated → 스킵
+    }
+
+    #[test]
+    fn test_pdr_with_urr_id_roundtrip() {
+        use crate::builder::{MsgBuilder, PdrParams};
+        use crate::header::PfcpHeader;
+
+        let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_ESTABLISHMENT_REQ, 0, 1);
+        let mut msg = MsgBuilder::new(hdr);
+
+        msg.add_create_pdr(&PdrParams {
+            pdr_id: 1,
+            precedence: 100,
+            source_interface: 0,
+            fteid_choose: false,
+            ue_ip: None,
+            far_id: 1,
+            urr_id: Some(7),
+            outer_header_removal: false,
+            sdf_filter: None,
+        });
+
+        let bytes = msg.finish();
+        let (_hdr, body) = PfcpHeader::decode(&bytes).expect("header decode");
+        let ies = iter_ies(body);
+        let pdr_ie = ies.iter()
+            .find(|ie| ie.ie_type == PFCP_IE_CREATE_PDR)
+            .expect("Create PDR present");
+
+        let parsed = parse_create_pdr(pdr_ie.value).expect("parse ok");
+        assert_eq!(parsed.urr_id, Some(7));  // 파서에 match 케이스 누락되면 여기서 None으로 실패
+        assert_eq!(parsed.far_id, Some(1));
     }
 }

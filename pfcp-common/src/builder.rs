@@ -95,6 +95,11 @@ impl MsgBuilder {
         Self::append_ie(&mut inner, PFCP_IE_PDI, &pdi);
 
         Self::append_ie(&mut inner, PFCP_IE_FAR_ID, &p.far_id.to_be_bytes());
+
+        if let Some(urr_id) = p.urr_id {
+            Self::append_ie(&mut inner, PFCP_IE_URR_ID, &urr_id.to_be_bytes());
+        }
+
         if p.outer_header_removal {
             Self::append_ie(&mut inner, PFCP_IE_OUTER_HEADER_REMOVAL, &[0x00]);
         }
@@ -186,6 +191,7 @@ pub struct PdrParams {
     pub fteid_choose: bool,
     pub ue_ip: Option<Ipv4Addr>,
     pub far_id: u32,
+    pub urr_id: Option<u32>,
     pub outer_header_removal: bool,
     pub sdf_filter: Option<SdfFilter>,
 }
@@ -255,6 +261,7 @@ pub fn build_session_establishment_request(seq: u32, smf_addr: std::net::Ipv4Add
             fteid_choose: true,
             ue_ip: Some(ue_ip),
             far_id: 1,
+            urr_id: None,
             outer_header_removal: true,
             sdf_filter: None,
         }
@@ -268,6 +275,7 @@ pub fn build_session_establishment_request(seq: u32, smf_addr: std::net::Ipv4Add
             fteid_choose: false,
             ue_ip: Some(ue_ip),
             far_id: 2,
+            urr_id: None,
             outer_header_removal: false,
             sdf_filter: None,
         }
@@ -389,7 +397,9 @@ mod tests {
             pdr_id: 1, precedence: 100,
             source_interface: 0, // Access
             fteid_choose: true, ue_ip: Some(Ipv4Addr::new(10, 45, 0, 100)),
-            far_id: 1, outer_header_removal: true,
+            far_id: 1,
+            urr_id: None,
+            outer_header_removal: true,
             sdf_filter: None,
         });
         let bytes = msg.finish();

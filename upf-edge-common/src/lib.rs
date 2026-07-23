@@ -76,10 +76,9 @@ pub struct PdrValue {
 
     /// QFI (QoS Flow Identifier)
     pub qfi: u8,
-
     pub far_id: u32,
-
     pub qer_id: u32,
+    pub urr_id: u32,
     pub outer_header_removal: u8,
 
     // --SDF(Service Data Flow) Filter--------
@@ -151,6 +150,34 @@ pub struct FarValue {
 unsafe impl aya::Pod for FarValue{}
 
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct UrrKey {
+    pub key: u64,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for UrrKey{}
+
+impl UrrKey {
+    #[inline(always)]
+    pub fn new(seid: u64, urr_id: u32) -> Self {
+        UrrKey { key: (seid << 16) | (urr_id as u64 & 0xFFFF) }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UrrStats {
+    pub ul_bytes: u64,
+    pub ul_packets: u64,
+    pub dl_bytes: u64,
+    pub dl_packets: u64,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for UrrStats {}
+
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -212,5 +239,29 @@ mod tests {
         // PDR ID 최대값(0xFFFF)도 seid를 침범하지 않아야 한다.
         let k = PdrKey::new(3, 0xFFFF);
         assert_eq!(k.key, (3u64 << 16) | 0xFFFF);
+    }
+
+    #[test]
+    fn test_urr_key_composition() {
+        let k = UrrKey::new(1, 2);
+        assert_eq!(k.key, 0x0001_0002);
+    }
+
+    #[test]
+    fn test_urr_key_different_seid_no_collision() {
+        let a = UrrKey::new(1, 1);
+        let b = UrrKey::new(2, 1);
+        assert_ne!(a.key, b.key);
+    }
+
+    #[test]
+    fn test_urr_key_same_session_multiple_urrs() {
+        // 세션당 여러 URR — 이번 설계의 핵심 요구사항
+        let u1 = UrrKey::new(5, 1);
+        let u2 = UrrKey::new(5, 2);
+        let u3 = UrrKey::new(5, 3);
+        assert_ne!(u1.key, u2.key);
+        assert_ne!(u2.key, u3.key);
+        assert_ne!(u1.key, u3.key);
     }
 }

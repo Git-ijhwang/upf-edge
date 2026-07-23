@@ -38,6 +38,7 @@ pub struct SessionEstablishmentReq {
     pub smf_addr: Ipv4Addr,
     pub create_pdrs: Vec<crate::ie::ParsedPDR>,
     pub create_fars: Vec<crate::ie::ParsedFAR>,
+    pub create_urrs: Vec<crate::ie::ParsedURR>,
 }
 
 impl SessionEstablishmentReq {
@@ -68,6 +69,11 @@ impl SessionEstablishmentReq {
                 .map_err(|e| anyhow::anyhow!("{}", e)))
             .collect::<anyhow::Result<Vec<_>>>()?;
 
+        let create_urrs = ies.iter()
+            .filter(|ie| ie.ie_type == PFCP_IE_CREATE_URR)
+            .map(|raw| ie::parse_create_urr(raw.value)
+                .map_err(|e| anyhow::anyhow!("{}", e)))
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(Self {
             node_id,
@@ -75,6 +81,7 @@ impl SessionEstablishmentReq {
             smf_addr,
             create_pdrs,
             create_fars,
+            create_urrs,
         })
     }
 }

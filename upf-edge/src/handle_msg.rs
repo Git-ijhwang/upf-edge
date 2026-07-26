@@ -560,7 +560,8 @@ fn handle_session_deletion( header: &PfcpHeader,
                             server: &Arc<Mutex<PfcpServer>>,
                             session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
                             pdr_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::PdrKey, upf_edge_common::PdrValue>>>,
-                            far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
+                            far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,
+                            urr_map: &Arc<Mutex<PerCpuHashMap<aya::maps::MapData, upf_edge_common::UrrKey, upf_edge_common::UrrStats>>>,)
     -> anyhow::Result<Vec<u8>>
 {
     let seid = header.seid.unwrap_or(0);
@@ -652,13 +653,18 @@ fn handle_session_deletion( header: &PfcpHeader,
             let pdr_count = pdr_count.min(upf_edge_common::MAX_PDR_PER_SESSION);
 
             let mut far_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            let mut urr_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
 
             {
                 let mut map = pdr_map.lock().unwrap();
                 for i in 0..pdr_count {
                     let pdr_id = pdr_ids[i];
+
                     if let Ok(pv) = map.get(&PdrKey::new(seid, pdr_id), 0){
                         far_ids.insert(pv.far_id);
+                        if pv.urr_id != 0 {
+                            urr_ids.insert(pv.urr_id);
+                        }
                     }
                 }
             }
@@ -675,8 +681,16 @@ fn handle_session_deletion( header: &PfcpHeader,
             // 4. FAR remove from PDR_MAP
             {
                 let mut map = far_map.lock().unwrap();
-                for &far_id in & far_ids {
+                for &far_id in &far_ids {
                     let _ = map.remove(&FarKey::new(seid, far_id));
+                }
+            }
+
+            // 4.b URR Remove
+            {
+                let mut map = urr_map.lock().unwrap();
+                for &urr_id in &urr_ids {
+                    let _ = map.remove(&UrrKey::new(seid, urr_id));
                 }
             }
 
@@ -686,8 +700,8 @@ fn handle_session_deletion( header: &PfcpHeader,
                 let _ = map.remove(&key);
             }
 
-            log::info!("  eBPF map removed: UE={}, PDRx{}, FARx{}",
-                data.ue_ip, pdr_count, far_ids.len());
+            log::info!("  eBPF map removed: UE={}, PDRx{}, FARx{}, URRx{}",
+                data.ue_ip, pdr_count, far_ids.len(), urr_ids.len());
 
             teardown_ue_route(data.ue_ip);
         }
@@ -757,7 +771,7 @@ pub fn handle_message ( data: &[u8],
         }
 
         PFCP_SESSION_DELETION_REQ => {
-            handle_session_deletion(&header, body, src, server, session_map, pdr_map, far_map)
+            handle_session_deletion(&header, body, src, server, session_map, pdr_map, far_map, urr_map)
         }
 
         other => {

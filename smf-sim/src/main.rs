@@ -216,7 +216,7 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
         fteid_choose: false,
         ue_ip: Some(ue_ip),
         far_id: 1,
-        urr_id: None,
+        urr_id: Some(1),
         outer_header_removal: false,
         sdf_filter: Some(pfcp_common::ie::SdfFilter {
             proto: 6,
@@ -249,7 +249,7 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
         fteid_choose: false,
         ue_ip: Some(ue_ip),
         far_id: 2,
-        urr_id: None,
+        urr_id: Some(1),
         outer_header_removal: false,
         sdf_filter: None,
     });
@@ -281,6 +281,17 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
         apply_action: ACTION_DROP,
         dest_interface: INTERFACE_CORE,
         outer_header_creation: None,
+    });
+
+
+    // URR #1
+    // URR #1: VOLTH + PERIO
+    msg.add_create_urr(&pfcp_common::builder::UrrParams {
+        urr_id: 1,
+        measurement_method: MEASUREMENT_METHOD_VOLUM,
+        reporting_triggers: REPORTING_TRIGGER_VOLTH | REPORTING_TRIGGER_PERIO,
+        volume_threshold_total: Some(10_000),   // 10KB — 테스트하기 쉽게 낮게
+        measurement_period: Some(30),           // 30초마다 주기 보고
     });
 
     let req = msg.finish();

@@ -26,13 +26,15 @@ The project interoperates with Open5GS and free5GC control planes over the N4 (P
 │ │  ├── Redis session store (persistence + restart recovery) │ │ 
 │ │  └── Ratatui TUI (session list, event log, commands)      │ │ 
 │ └───────────────────────────────────────────────────────────┘ │ 
-│             │ eBPF maps (SESSION_MAP, PDR_MAP, FAR_MAP)       │ 
+│             │ eBPF maps (SESSION_MAP, PDR_MAP, FAR_MAP,       │
+│             │            URR_MAP, STATS_MAP)                  │
 │             ▼                                                 │ 
 │ ┌───────────────────────────────────────────────────────────┐ │ 
 │ │  Kernel (eBPF/XDP via aya)                                │ │ 
 │ │  ├── GTP-U encapsulation / decapsulation                  │ │ 
 │ │  ├── TEID-based session lookup                            │ │ 
 │ │  ├── PDR / FAR rule application                           │ │ 
+│ │  ├── URR usage counting (volume per session)              │ │
 │ │  ├── N3 ↔ N6 redirect (bpf_redirect)                      │ │ 
 │ │  └── UDP/IP checksum recomputation                        │ │ 
 │ └───────────────────────────────────────────────────────────┘ │ 
@@ -53,7 +55,8 @@ The project interoperates with Open5GS and free5GC control planes over the N4 (P
 - UDP / IP checksum recomputation
 - XDP attached to the Docker bridge interface (`br-*`) in `SKB_MODE` for virtual-interface support
 - Automatic UE route and neighbor management (installed on Session Establishment, removed on Deletion)
-- Three eBPF maps: `SESSION_MAP`, `PDR_MAP`, `FAR_MAP`
+- eBPF maps: `SESSION_MAP`, `PDR_MAP`, `FAR_MAP`, `URR_MAP` (per-CPU usage counters), `STATS_MAP`
+- SEID-namespaced map keys: `PdrKey`/`FarKey`/`UrrKey` compose `(SEID << 16) | id` into a single `u64`, preventing cross-session ID collisions when multiple sessions reuse the same PDR/FAR/URR IDs
 
 ### Control plane (userspace, Rust)
 
@@ -64,8 +67,20 @@ The project interoperates with Open5GS and free5GC control planes over the N4 (P
   - Session Modification Request / Response
   - Session Deletion Request / Response
   - Heartbeat Request / Response
+  - Session Report Request / Response (UPF-initiated usage reporting)
 - Session state machine (Establishment → Modification → Deletion lifecycle)
 - Redis-backed session persistence with restart recovery
+
+### Usage reporting (URR — 3GPP TS 29.244 §7.5)
+
+- Create URR / Update URR parsing (measurement method, reporting triggers, volume threshold, measurement period)
+- Per-URR usage counters in the kernel (`URR_MAP`, per-CPU), keyed by `(SEID, URR ID)`
+- Uplink/downlink volume accounting incremented on PDR match in XDP (dropped packets excluded)
+- **Session Report Request** emission — the first UPF-initiated message flow in the project, sent when a reporting trigger fires:
+  - **PERIO** (periodic): reported every measurement period
+  - **VOLTH** (volume threshold): reported when accumulated volume crosses the threshold
+- Session Report Response handling
+- URR lifecycle: created on Session Establishment, replaced on Session Modification, cleaned up on Session Deletion
 
 ### Multi-SMF support (3GPP TS 29.244 §5.5 compliant)
 
@@ -84,6 +99,8 @@ The project interoperates with Open5GS and free5GC control planes over the N4 (P
 - Interactive mode via Ratatui
 - Multi-instance execution for validating Multi-SMF isolation
 - socket2-based transport for source IP/port control
+- Single-message send mode (`send association-setup`, `send session-establish --wait`, `send session-modify`, `send session-delete`) for targeted testing
+- Session Report Request reception and Response emission (`--wait` keeps the socket open to receive UPF-initiated reports)
 
 ### Operations
 
@@ -97,6 +114,8 @@ The project interoperates with Open5GS and free5GC control planes over the N4 (P
 - **Open5GS**: end-to-end integration with `sa-deploy.yaml`. UE attach, IP allocation, uplink/downlink traffic verified with UERANSIM.
 - **Wireshark**: PFCP wire format validated against the Open5GS Discord community dissector output.
 - **Multi-SMF scenario**: two `smf-sim` instances running concurrently, each establishing an independent session. Q1 exclusive ownership blocks cross-SMF modification and deletion. Q6 replace logic tested by restart with new Recovery TS.
+- **URR reporting**: Session Report Request emission verified end-to-end against `smf-sim` (Wireshark-decoded: Report Type USAR, Usage Report grouped IE, URR ID, UR-SEQN, Volume Measurement). PERIO trigger and Session Report req/rsp round-trip confirmed; Update URR reconfiguration (threshold/period) verified. 
+
 
 ---
 
@@ -109,6 +128,7 @@ upf-edge/
 │       ├── main.rs
 │       ├── pfcp_server.rs         # PFCP server + keepalive
 │       ├── handle_msg.rs          # 5 PFCP message handlers
+│       ├── urr_reporter.rs        # URR polling → Session Report Request task
 │       ├── association.rs         # SmfAssociation + HeartbeatTracker
 │       ├── session_store.rs       # Redis persistence
 │       └── tui/                   # Ratatui interface
@@ -189,18 +209,14 @@ The scope is set to keep the project completable and its behavior fully understo
 ## What's next
 
 Currently in progress or planned:
-
-- URR (Usage Reporting Rule) implementation for data-plane statistics
-- Prometheus metrics exporter
 - Performance benchmarking against Open5GS's userspace UPF (deferred until suitable test environment is available)
 - Additional PFCP message coverage as needed
-- Continued articles on architecture decisions and lessons
 
 ---
 
 ## References
 
-- 3GPP TS 29.244 (PFCP) — §5.5 Association Management, §7 Message Formats
+- 3GPP TS 29.244 (PFCP) — §5.5 Association Management, §7 Message Formats, §7.5 Usage Reporting
 - 3GPP TS 29.281 (GTP-U) — §5 Header
 - 3GPP TS 23.501 (5G System Architecture) — §4
 - 3GPP TR 23.700-27 (Satellite Backhauling in 5GS) — Section 6.5, Satellite Edge Computing via on-board UPF

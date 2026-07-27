@@ -67,7 +67,10 @@ enum SingleMessage {
     SessionEstablish {
         /// UE IP Address
         #[arg(long, default_value = "10.45.0.100")]
-        ue_ip: Ipv4Addr
+        ue_ip: Ipv4Addr,
+
+        #[arg(long, default_value = "0")]
+        wait: u64,
     },
 
     ///Session Delete Request
@@ -99,6 +102,93 @@ fn recovery_ts() -> u32 {
 
 //     unix.wrapping_add(2_208_988_800)
 // }
+
+
+async fn wait_and_handle_reports(
+    transport: &transport::PfcpTransport,
+    seconds: u64,
+) -> anyhow::Result<()> {
+    use tokio::time::{timeout, Duration, Instant};
+
+    tracing::info!("Waiting {}s for Session Report Requests...", seconds);
+    let deadline = Instant::now() + Duration::from_secs(seconds);
+    let mut buf = [0u8; 2048];
+
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+
+        match timeout(remaining, transport.recv_from(&mut buf)).await {
+            Ok(Ok((n, src))) => {
+                let (hdr, body) = match PfcpHeader::decode(&buf[..n]) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!("decode failed: {}", e);
+                        continue;
+                    }
+                };
+
+                if hdr.msg_type == PFCP_SESSION_REPORT_REQ {
+                    let seid = hdr.seid.unwrap_or(0);
+
+                    let ies = ie::iter_ies(body);
+                    for outer in &ies {
+                        if outer.ie_type == PFCP_IE_USAGE_REPORT_IN_SESS_RPT_REQ {
+                            let inner = ie::iter_ies(outer.value);
+                            let mut urr_id = 0u32;
+                            let mut trigger = 0u16;
+                            let mut total = 0u64;
+                            let mut ul = 0u64;
+                            let mut dl = 0u64;
+
+                            for ie in &inner {
+                                match ie.ie_type {
+                                    PFCP_IE_URR_ID if ie.value.len() >= 4 => {
+                                        urr_id = u32::from_be_bytes([
+                                                ie.value[0], ie.value[1],
+                                                ie.value[2], ie.value[3],
+                                            ]);
+                                    }
+                                    PFCP_IE_USAGE_REPORT_TRIGGER if ie.value.len() >= 2 => {
+                                        trigger = ie.value[0] as u16;
+                                    }
+                                    PFCP_IE_VOLUME_MEASUREMENT if ie.value.len() >= 25 => {
+                                        total = u64::from_be_bytes(
+                                                ie.value[1..9].try_into().unwrap());
+                                        ul = u64::from_be_bytes(
+                                                ie.value[9..17].try_into().unwrap());
+                                        dl = u64::from_be_bytes(
+                                                ie.value[17..25].try_into().unwrap());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            tracing::info!(
+                                "<- Session Report Req (seid={:#x}, urr={}, trigger={:#x}, total={}, ul={}, dl={})",
+                                seid, urr_id, trigger, total, ul, dl);
+                        }
+                    }
+                    // Response 회신
+                    let rsp = pfcp_common::builder::build_session_report_response(hdr.seq_num, seid);
+                    transport.send_to(&rsp, src).await?;
+                    tracing::info!("-> Session Report Response (seq={})", hdr.seq_num);
+
+                }
+                else {
+                    tracing::info!("<- Ignored msg_type={} (seq={})", hdr.msg_type, hdr.seq_num);
+                }
+            }
+            Ok(Err(e)) => return Err(e.into()),
+            Err(_) => break,
+        }
+    }
+
+    tracing::info!("Report waiting finished.");
+    Ok(())
+}
+
 
 async fn send_heartbeat(transport: &transport::PfcpTransport) 
     -> anyhow::Result<()>
@@ -192,7 +282,8 @@ async fn  send_association_setup (transport: &transport::PfcpTransport,
 
 async fn send_session_establishment( transport: &transport::PfcpTransport,
                                      config: &config::SimConfig,
-                                     ue_ip: Ipv4Addr)
+                                     ue_ip: Ipv4Addr,
+                                     wait: u64)
     -> anyhow::Result<()>
 {
     let seq = 2u32;
@@ -300,6 +391,10 @@ async fn send_session_establishment( transport: &transport::PfcpTransport,
     let rsp = transport.send_and_recv(&req).await?;
     validator::validate_response(PFCP_SESSION_ESTABLISHMENT_REQ, seq, &rsp)?;
     let (upf_seid, upf_teid, upf_n3_addr) = validator::extract_session_info(&rsp)?;
+
+    if wait > 0 {
+        wait_and_handle_reports(transport, wait).await;
+    }
 
     /* 
     let (rsp_hdr, body) = PfcpHeader::decode(&rsp)?;
@@ -432,8 +527,8 @@ async fn main() -> anyhow::Result<()>
                 send_association_setup(&transport, config.network.smf_n4_addr).await?;
             }
 
-            SingleMessage::SessionEstablish { ue_ip } => {
-                send_session_establishment(&transport, &config, ue_ip).await?;
+            SingleMessage::SessionEstablish { ue_ip, wait } => {
+                send_session_establishment(&transport, &config, ue_ip, wait).await?;
             }
 
             SingleMessage::SessionDelete { seid } => {

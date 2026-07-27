@@ -774,6 +774,11 @@ pub fn handle_message ( data: &[u8],
             handle_session_deletion(&header, body, src, server, session_map, pdr_map, far_map, urr_map)
         }
 
+        PFCP_SESSION_REPORT_RSP => {
+            log::info!("<- Session Report Response (seq={}, seid={:?})", header.seq_num, header.seid);
+            Ok(vec![])
+        }
+
         other => {
             if other % 2 == 0 {
                 log::warn!("Ignored response msg_type={}", other);

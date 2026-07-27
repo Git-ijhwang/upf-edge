@@ -25,8 +25,8 @@ impl PfcpTransport  {
                        peer_addr: SocketAddr,
                        timeout_ms: u64,
                        max_retries: u32,)
-    -> anyhow::Result<Self>
-{
+        -> anyhow::Result<Self>
+    {
         // let socket = UdpSocket::bind(bind_addr).await?;
         let sock = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
         sock.set_nonblocking(true)?;
@@ -59,7 +59,8 @@ impl PfcpTransport  {
     }
 
 
-    pub async fn send_and_recv(&self, msg: &[u8]) -> anyhow::Result<Vec<u8>> 
+    pub async fn send_and_recv(&self, msg: &[u8])
+        -> anyhow::Result<Vec<u8>> 
     {
         let expected_rsp_type = {
             let (hdr, _) = PfcpHeader::decode(msg)?;
@@ -126,6 +127,22 @@ impl PfcpTransport  {
 
         Err(last_err.unwrap())
     }
+
+
+    pub async fn send_to(&self, msg: &[u8], dst: SocketAddr)
+        -> anyhow::Result<()>
+    {
+        self.socket.send_to(msg, dst).await?;
+        Ok(())
+    }
+
+
+    pub async fn recv_from(&self, buf: &mut [u8])
+        -> std::io::Result<(usize, std::net::SocketAddr)>
+    {
+        self.socket.recv_from(buf).await
+    }
+
 }
 
 

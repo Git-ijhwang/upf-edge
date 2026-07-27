@@ -157,7 +157,7 @@ fn find_interface_for_addr(ip: std::net::IpAddr) -> Option<String> {
         // example: "6: br-0325d1d49919    inet 172.22.0.51/24 ..."
 
         let parts: Vec<&str> = line.split_whitespace().collect();
-        tracing::info!("Checking interface line: {:#?}", parts);
+        tracing::info!("Checking interface line: {:?}", parts);
         if parts.len() < 4 {
             let iface = parts[1];
             let addr_with_prefix = parts[3];

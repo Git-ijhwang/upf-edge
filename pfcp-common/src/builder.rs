@@ -107,6 +107,36 @@ impl MsgBuilder {
         self.add_ie(PFCP_IE_CREATE_PDR, &inner);
     }
 
+
+    pub fn add_update_urr(&mut self, u: &UrrParams) {
+        let mut inner = Vec::new();
+
+        //URR ID
+        Self::append_ie(&mut inner, PFCP_IE_URR_ID, &u.urr_id.to_be_bytes());
+
+        //Measurement Method
+        Self::append_ie(&mut inner, PFCP_IE_MEASUREMENT_METHOD, &[u.measurement_method]);
+
+        //Reporting Triggers
+        Self::append_ie(&mut inner, PFCP_IE_REPORTING_TRIGGERS, &[u.reporting_triggers, 0x00]);
+
+        //Volume Theshold
+        if let Some(total) = u.volume_threshold_total {
+            let mut val = vec![VOLUME_THRESHOLD_TOVOL];
+            val.extend_from_slice(&total.to_be_bytes());
+            Self::append_ie(&mut inner, PFCP_IE_VOLUME_THRESHOLD, &val);
+        }
+
+        //Measurement Period
+        if let Some(period) = u.measurement_period {
+            Self::append_ie(&mut inner, PFCP_IE_MEASUREMENT_PERIOD, &period.to_be_bytes());
+        }
+
+        self.add_ie(PFCP_IE_UPDATE_URR, &inner);
+
+    }
+
+
     pub fn add_create_urr(&mut self, u: &UrrParams) {
         let mut inner = Vec::new();
 

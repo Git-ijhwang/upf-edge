@@ -434,7 +434,7 @@ fn handle_session_establishment(header: &PfcpHeader,
 
 
 /// Session Modification 처리
-fn handle_session_modification(header: &PfcpHeader,
+fn handle_session_modification( header: &PfcpHeader,
                                 body: &[u8],
                                 src: SocketAddr,
                                 server: &Arc<Mutex<PfcpServer>>,
@@ -443,9 +443,15 @@ fn handle_session_modification(header: &PfcpHeader,
                                 urr_map: &Arc<Mutex<PerCpuHashMap<aya::maps::MapData, upf_edge_common::UrrKey, upf_edge_common::UrrStats>>>,)
     -> anyhow::Result<Vec<u8>>
 {
+    log::info!("  [DEBUG] body hex: {:02x?}", &body[..body.len().min(64)]);
+
     let req = pfcp_common::messages::SessionModificationReq::decode(body)?;
     let update_fars = req.update_fars;
     let update_urrs = req.update_urrs;
+    log::info!("  [DEBUG] update_urrs.len()={}, body_len={}", update_urrs.len(), body.len());
+
+    log::info!("  [DEBUG] update_fars={}, update_urrs={}",
+        update_fars.len(), update_urrs.len());
 
     let local_seid = header.seid
         .ok_or_else(|| anyhow::anyhow!("Session Modification Request missing SEID"))?;
@@ -555,7 +561,7 @@ fn handle_session_modification(header: &PfcpHeader,
             cfg.measurement_period = urr.measurement_period;
 
             cfg.threshold_reported = false;
-            log::info!("  eBPF URR[{}] updated: Triggeres: {:#x}, volth: {:#?}, period: {:#?}",
+            log::info!("  eBPF URR[{}] updated: Triggeres: {:#x}, volth: {:?}, period: {:?}",
                 urr.urr_id, urr.reporting_triggers,
                 urr.volume_threshold_total, urr.measurement_period);
         }

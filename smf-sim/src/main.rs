@@ -79,6 +79,19 @@ enum SingleMessage {
         #[arg(long)]
         seid: u64
     },
+
+    /// Association Setup Request
+    SessionModify {
+        #[arg(long)]
+        seid: u64,
+
+        #[arg(long)]
+        volth: Option<u64>,
+
+        #[arg(long)]
+        period: Option<u32>,
+
+    },
 }
 
 fn recovery_ts() -> u32 {
@@ -104,10 +117,46 @@ fn recovery_ts() -> u32 {
 // }
 
 
-async fn wait_and_handle_reports(
-    transport: &transport::PfcpTransport,
-    seconds: u64,
-) -> anyhow::Result<()> {
+async fn send_session_modification( transport: &transport::PfcpTransport,
+                                    config: &config::SimConfig,
+                                    seid: u64,
+                                    volth: Option<u64>,
+                                    period: Option<u32>,)
+    -> anyhow::Result<()>
+{
+    let seq = 3;
+    tracing::info!("-> Session Modification Request (seq={}, seid={:#x}",
+        seq, seid);
+
+    let hdr = PfcpHeader::new_session_msg(PFCP_SESSION_MODIFICATION_REQ, seid, seq);
+    let mut msg = MsgBuilder::new(hdr);
+
+    msg.add_update_urr(&pfcp_common::builder::UrrParams {
+        urr_id: 1,
+        measurement_method: MEASUREMENT_METHOD_VOLUM,
+        reporting_triggers: REPORTING_TRIGGER_VOLTH | REPORTING_TRIGGER_PERIO,
+        volume_threshold_total: volth,
+        measurement_period: period,
+    });
+
+    let req = msg.finish();
+    tracing::info!("  Build {} bytes", req.len());
+
+    let rsp = transport.send_and_recv(&req).await?;
+    let (hdr, _body) = PfcpHeader::decode(&rsp)?;
+
+    anyhow::ensure!(
+        hdr.msg_type == PFCP_SESSION_MODIFICATION_RSP,
+        "expected {}, got {}", PFCP_SESSION_MODIFICATION_RSP, hdr.msg_type);
+    tracing::info!("<- Session Modification Response (seq={})", hdr.seq_num);
+
+    Ok(())
+}
+
+async fn wait_and_handle_reports( transport: &transport::PfcpTransport,
+                                  seconds: u64,)
+    -> anyhow::Result<()>
+{
     use tokio::time::{timeout, Duration, Instant};
 
     tracing::info!("Waiting {}s for Session Report Requests...", seconds);
@@ -529,6 +578,10 @@ async fn main() -> anyhow::Result<()>
 
             SingleMessage::SessionEstablish { ue_ip, wait } => {
                 send_session_establishment(&transport, &config, ue_ip, wait).await?;
+            }
+
+            SingleMessage::SessionModify { seid, volth, period } => {
+                send_session_modification(&transport, &config, seid, volth, period).await?;
             }
 
             SingleMessage::SessionDelete { seid } => {

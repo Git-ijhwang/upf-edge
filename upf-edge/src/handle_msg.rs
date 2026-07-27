@@ -439,11 +439,13 @@ fn handle_session_modification(header: &PfcpHeader,
                                 src: SocketAddr,
                                 server: &Arc<Mutex<PfcpServer>>,
                                 session_map: &Arc<Mutex<HashMap<aya::maps::MapData, SessionKey, SessionInfo>>>,
-                                far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,)
+                                far_map: &Arc<Mutex<HashMap<aya::maps::MapData, upf_edge_common::FarKey, upf_edge_common::FarValue>>>,
+                                urr_map: &Arc<Mutex<PerCpuHashMap<aya::maps::MapData, upf_edge_common::UrrKey, upf_edge_common::UrrStats>>>,)
     -> anyhow::Result<Vec<u8>>
 {
     let req = pfcp_common::messages::SessionModificationReq::decode(body)?;
     let update_fars = req.update_fars;
+    let update_urrs = req.update_urrs;
 
     let local_seid = header.seid
         .ok_or_else(|| anyhow::anyhow!("Session Modification Request missing SEID"))?;
@@ -540,6 +542,26 @@ fn handle_session_modification(header: &PfcpHeader,
                 sess.gnb_ip = new_gnb_ip;
                 sess.teid = new_teid;
             }
+        }
+    }
+
+    for urr in &update_urrs {
+        let key = (local_seid, urr.urr_id);
+
+        if let Some(cfg) = srv.urr_configs.get_mut(&key) {
+            cfg.measurement_method = urr.measurement_method;
+            cfg.reporting_triggers = urr.reporting_triggers;
+            cfg.volume_threshold_total = urr.volume_threshold_total;
+            cfg.measurement_period = urr.measurement_period;
+
+            cfg.threshold_reported = false;
+            log::info!("  eBPF URR[{}] updated: Triggeres: {:#x}, volth: {:#?}, period: {:#?}",
+                urr.urr_id, urr.reporting_triggers,
+                urr.volume_threshold_total, urr.measurement_period);
+        }
+        else {
+           log::warn!("  Update URR for unknown urr_id={} (seid={:#x}). Ignored.",
+                urr.urr_id, local_seid); 
         }
     }
 
@@ -767,7 +789,7 @@ pub fn handle_message ( data: &[u8],
         }
 
         PFCP_SESSION_MODIFICATION_REQ => {
-            handle_session_modification(&header, body, src, server, session_map, far_map)
+            handle_session_modification(&header, body, src, server, session_map, far_map, urr_map)
         }
 
         PFCP_SESSION_DELETION_REQ => {

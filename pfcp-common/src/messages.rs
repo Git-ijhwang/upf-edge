@@ -108,6 +108,7 @@ pub struct SessionModificationReq {
     pub cp_seid: Option<u64>,
     pub smf_addr: Option<Ipv4Addr>,
     pub update_fars: Vec<crate::ie::ParsedFAR>,
+    pub update_urrs: Vec<crate::ie::ParsedURR>,
 }
 
 impl SessionModificationReq {
@@ -128,11 +129,17 @@ impl SessionModificationReq {
                 .map_err(|e| anyhow::anyhow!("{}", e)))
             .collect::<anyhow::Result<Vec<_>>>()?;
 
+        let update_urrs = ies.iter()
+            .filter(|ie| ie.ie_type == PFCP_IE_UPDATE_URR)
+            .map(|raw| ie::parse_create_urr(raw.value)
+                .map_err(|e| anyhow::anyhow!("{}", e)))
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
         Ok(Self {
             cp_seid,
             smf_addr,
             update_fars,
+            update_urrs,
         })
     }
 }

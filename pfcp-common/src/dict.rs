@@ -114,7 +114,7 @@ pub static PFCP_DICT: phf::Map<u8, MessageSpec> = phf_map! {
         msg_type: PFCP_SESSION_MODIFICATION_REQ,
         name:     "Session Modification Request",
         ies: &[
-            IeSpec { ie_type: PFCP_IE_FSEID,      presence: Presence::Conditional,   name: "F-SEID" },
+            IeSpec { ie_type: PFCP_IE_FSEID,       presence: Presence::Conditional,   name: "F-SEID" },
             IeSpec { ie_type: PFCP_IE_UPDATE_PDR,  presence: Presence::Conditional, name: "Update PDR" },
             IeSpec { ie_type: PFCP_IE_UPDATE_FAR,  presence: Presence::Conditional, name: "Update FAR" },
             IeSpec { ie_type: PFCP_IE_REMOVE_PDR,  presence: Presence::Optional,    name: "Remove PDR" },
@@ -140,9 +140,23 @@ pub static PFCP_DICT: phf::Map<u8, MessageSpec> = phf_map! {
         msg_type: PFCP_SESSION_DELETION_RSP,
         name:     "Session Deletion Response",
         ies: &[
-            IeSpec { ie_type: PFCP_IE_CAUSE,                       presence: Presence::Mandatory, name: "Cause" },
+            IeSpec { ie_type: PFCP_IE_CAUSE,                        presence: Presence::Mandatory, name: "Cause" },
             IeSpec { ie_type: PFCP_IE_USAGE_REPORT_IN_SESS_MEL_RSP, presence: Presence::Optional, name: "Usage Report" },
         ],
+    },
+
+    56u8 => MessageSpec {
+        msg_type: PFCP_SESSION_REPORT_REQ,
+        name:     "Session Report Request",
+        ies: &[
+            IeSpec { ie_type: PFCP_IE_REPORT_TYPE,                        presence: Presence::Mandatory, name: "Report Type" },
+            IeSpec { ie_type: PFCP_IE_USAGE_REPORT_IN_SESS_RPT_REQ,       presence: Presence::Conditional, name: "Usage Report in Session Report Request" },
+        ],
+    },
+    57u8 => MessageSpec {
+        msg_type: PFCP_SESSION_REPORT_RSP,
+        name:     "Session Report Response",
+        ies: &[],
     },
 
 };
